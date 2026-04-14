@@ -1,0 +1,1794 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Welcome Drink P&L v3.3</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+window.addEventListener('error', e => {
+  document.getElementById('root').innerHTML = '<div style="padding:20px;font-family:monospace;background:#fee;color:#c00"><b>Ошибка:</b> ' + e.message + '<br><small>' + (e.filename || '') + ':' + (e.lineno || '') + '</small></div>';
+});
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useRef } = React;
+const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Area, Line, LineChart } = Recharts;
+
+
+const MONTHS = ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"];
+const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#ec4899","#14b8a6","#f97316","#06b6d4","#84cc16","#a855f7","#64748b"];
+const n = (v) => v != null ? Number(v) : 0;
+const fmt = (v) => v != null ? Number(v).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "—";
+const fmtG = (v) => v != null ? `${fmt(v)} ₾` : "—";
+const fmtP = (v) => v != null ? `${(v * 100).toFixed(2)}%` : "—";
+
+// ════════════════════════════════════════════════
+// DATA MODEL — all line items for Welcome Drink
+// ════════════════════════════════════════════════
+const STRUCTURE = {
+  revenue: [
+    { key: "revenueTotal", name: "Оборот" },
+  ],
+  cogs: [
+    { key: "foodcost", name: "Себестоимость (фудкост)" },
+  ],
+  fixCost: [
+    { key: "rent", name: "Аренда" },
+    { key: "utilities", name: "Коммуналка" },
+    { key: "cleaning", name: "Уборка" },
+    { key: "ice", name: "Лед" },
+    { key: "poster", name: "Poster" },
+    { key: "accountant", name: "Бухгалтер" },
+    { key: "security", name: "Сигнализация (охрана)" },
+    { key: "aroma", name: "Aromaco (ароматизация)" },
+  ],
+  marketing: [
+    { key: "mktYandex", name: "Яндекс реклама" },
+    { key: "mktGoogle", name: "Google реклама" },
+    { key: "mktTripadvisor", name: "TripAdvisor" },
+    { key: "mktInstaTarget", name: "Инстаграм (таргет)" },
+    { key: "mktInstaPub", name: "Инстаграм (паблики)" },
+    { key: "mktTelegram", name: "Телеграм (паблики)" },
+  ],
+  salaries: [
+    { key: "salaryBar", name: "ЗП Бар" },
+    { key: "salaryKitchen", name: "ЗП Кухня" },
+    { key: "salaryBuyer", name: "Закупщик" },
+    { key: "salaryTaxi", name: "Такси (персонал)" },
+  ],
+  management: [
+    { key: "chefPay", name: "Шеф-повар" },
+    { key: "barManagerPay", name: "Бар-менеджер" },
+    { key: "smmPay", name: "SMM-щик" },
+    { key: "musiciansPay", name: "Музыканты" },
+    { key: "deliveryCost", name: "Доставка закупки" },
+  ],
+  writeoffs: [
+    { key: "woStaffFood", name: "Стаф-питание" },
+    { key: "woRnD", name: "Проработка" },
+    { key: "woSpoilage", name: "Порча" },
+    { key: "woNoReason", name: "Без причины" },
+    { key: "woInventory", name: "Инвентаризация (+/−)" },
+  ],
+  tax: [
+    { key: "tax", name: "Налоги" },
+  ],
+  kitchen: [
+    { key: "kitchenRevenue", name: "Оборот кухня" },
+    { key: "kitchenFoodcost", name: "Фудкост кухня" },
+    { key: "salaryKitchen", name: "ЗП кухня" },
+  ],
+};
+
+// ════════════════════════════════════════════════
+// DEMO DATA
+// ════════════════════════════════════════════════
+const genDemo = () => {
+  const base = [28000,26000,32000,35000,42000,48000,52000,50000,45000,38000,33000,40000];
+  return base.map((rev, m) => {
+    const daysN = new Date(2025, m+1, 0).getDate();
+    const days = [];
+    for (let d = 1; d <= daysN; d++) {
+      const dt = new Date(2025, m, d);
+      const dow = dt.getDay();
+      const dowIdx = dow === 0 ? 6 : dow - 1;
+      const dailyBase = rev / daysN;
+      const mult = (dow===5||dow===6) ? 1.6 : dow===0 ? 1.2 : 0.85;
+      const dayRev = Math.round(dailyBase * mult * (0.85 + Math.random()*0.3));
+      const kitchenShare = 0.18 + Math.random()*0.06;
+      const dayKitchenRev = Math.round(dayRev * kitchenShare);
+      // Фудкост кухни — часть общего фудкоста, не добавка
+      const dayKitchenFc = Math.round(dayKitchenRev * (0.30 + Math.random()*0.06));
+      const dayBarFc = Math.round((dayRev - dayKitchenRev) * (0.22 + Math.random()*0.04));
+      const dayTotalFc = dayBarFc + dayKitchenFc;
+      days.push({
+        date: `2025-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,
+        dow: dowIdx,
+        revenue: dayRev,
+        kitchenRevenue: dayKitchenRev,
+        foodcost: dayTotalFc,
+        kitchenFoodcost: dayKitchenFc,
+        transactions: Math.round(dayRev / (35 + Math.random()*25)),
+      });
+    }
+    const totRev = days.reduce((s,d) => s+d.revenue, 0);
+    const totKitRev = days.reduce((s,d) => s+d.kitchenRevenue, 0);
+    const totFc = days.reduce((s,d) => s+d.foodcost, 0);
+    const totKitFc = days.reduce((s,d) => s+d.kitchenFoodcost, 0);
+    const totTx = days.reduce((s,d) => s+d.transactions, 0);
+
+    const R = (min,max) => Math.round(min + Math.random()*(max-min));
+
+    return {
+      month: m, year: 2025, days, totalTransactions: totTx,
+      revenueTotal: totRev,
+      foodcost: totFc,
+      // Fix Cost
+      rent: 3500, utilities: R(600,1000), cleaning: R(300,500), ice: R(100,200),
+      poster: 150, accountant: 300, security: 120, aroma: 200,
+      // Marketing
+      mktYandex: R(200,500), mktGoogle: R(150,400), mktTripadvisor: R(50,150),
+      mktInstaTarget: R(200,600), mktInstaPub: R(100,300), mktTelegram: R(50,200),
+      // Salaries
+      salaryBar: R(4000,6000), salaryKitchen: R(1500,2500), salaryBuyer: R(800,1200), salaryTaxi: R(100,300),
+      // Management
+      chefPay: Math.round(totKitRev * 0.08) + 500,
+      barManagerPay: Math.round(totRev * 0.02) + 800,
+      smmPay: R(400,800), musiciansPay: R(200,600), deliveryCost: R(150,400),
+      // Writeoffs
+      woStaffFood: R(200,500), woRnD: R(100,300), woSpoilage: R(50,200), woNoReason: R(0,100),
+      woInventory: R(-300, 200),
+      // Tax
+      tax: R(200,800),
+      // Kitchen (kitchenSalary = salaryKitchen, это одна и та же сумма, не дублировать)
+      kitchenRevenue: totKitRev, kitchenFoodcost: totKitFc,
+    };
+  });
+};
+
+// ════════════════════════════════════════════════
+// COMPUTE P&L
+// ════════════════════════════════════════════════
+const computePnL = (d) => {
+  if (!d) return null;
+  const revenue = n(d.revenueTotal);
+  const foodcost = n(d.foodcost);
+  const grossProfit = revenue - foodcost;
+
+  const sumKeys = (keys) => keys.reduce((s, { key }) => s + n(d[key]), 0);
+
+  const fixTotal = sumKeys(STRUCTURE.fixCost);
+  const mktTotal = sumKeys(STRUCTURE.marketing);
+  const salTotal = sumKeys(STRUCTURE.salaries);
+  const mgmtTotal = sumKeys(STRUCTURE.management);
+  const woTotal = sumKeys(STRUCTURE.writeoffs);
+  const taxTotal = n(d.tax);
+
+  const totalExpenses = fixTotal + mktTotal + salTotal + mgmtTotal + woTotal;
+  const profitBeforeTax = grossProfit - totalExpenses;
+  const netProfit = profitBeforeTax - taxTotal;
+
+  // Kitchen (аналитический блок — кухня входит в общий оборот)
+  // ЗП кухни = salaryKitchen из блока зарплат (одна сумма, без дублирования)
+  const kitRev = n(d.kitchenRevenue);
+  const kitFc = n(d.kitchenFoodcost);
+  const kitSal = n(d.salaryKitchen);
+  const kitProfit = kitRev - kitFc - kitSal;
+
+  // KPI
+  const foodcostPct = revenue > 0 ? foodcost / revenue : 0;
+  const profitability = revenue > 0 ? netProfit / revenue : 0;
+  // ФОТ = все прямые зарплаты (бар + кухня + закупщик + такси + шеф + бар-менеджер)
+  // SMM и музыканты — это маркетинг/управление, не ФОТ
+  const fotTotal = n(d.salaryBar) + n(d.salaryKitchen) + n(d.salaryBuyer) + n(d.salaryTaxi) + n(d.chefPay) + n(d.barManagerPay);
+  const fotPct = revenue > 0 ? fotTotal / revenue : 0;
+  // CM: Переменные = фудкост + зарплаты + списания (привязаны к объёму)
+  const contributionMargin = revenue - foodcost - salTotal - woTotal;
+  const cmPct = revenue > 0 ? contributionMargin / revenue : 0;
+  // ТБУ: Постоянные = фикс + маркетинг + управленческие + налоги
+  const fixedForBE = fixTotal + mktTotal + mgmtTotal + taxTotal;
+  const tbu = cmPct > 0 ? Math.round(fixedForBE / cmPct) : 0;
+
+  return {
+    d, revenue, foodcost, grossProfit,
+    fixTotal, mktTotal, salTotal, mgmtTotal, woTotal,
+    totalExpenses, profitBeforeTax, taxTotal, netProfit,
+    kitRev, kitFc, kitSal, kitProfit,
+    foodcostPct, profitability, fotTotal, fotPct,
+    contributionMargin, cmPct, tbu,
+    totalTransactions: n(d.totalTransactions),
+    avgCheck: n(d.totalTransactions) > 0 ? Math.round(revenue / n(d.totalTransactions)) : 0,
+  };
+};
+
+const aggMonths = (arr) => {
+  if (!arr.length) return null;
+  const result = {};
+  const allKeys = [...STRUCTURE.revenue,...STRUCTURE.cogs,...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.writeoffs,...STRUCTURE.tax,...STRUCTURE.kitchen];
+  allKeys.forEach(({key}) => { result[key] = arr.reduce((s,m) => s + n(m[key]), 0); });
+  result.totalTransactions = arr.reduce((s,m) => s + n(m.totalTransactions), 0);
+  return result;
+};
+
+const aggDays = (days, monthData) => {
+  if (!days.length) return null;
+  const totRev = days.reduce((s,d) => s+d.revenue, 0);
+  const ratio = monthData.revenueTotal > 0 ? totRev / monthData.revenueTotal : 0;
+  const result = { revenueTotal: totRev };
+  result.foodcost = days.reduce((s,d) => s+d.foodcost, 0);
+  result.kitchenRevenue = days.reduce((s,d) => s+n(d.kitchenRevenue), 0);
+  result.kitchenFoodcost = days.reduce((s,d) => s+n(d.kitchenFoodcost), 0);
+  result.totalTransactions = days.reduce((s,d) => s+d.transactions, 0);
+  // Prorate monthly costs
+  const prorate = (key) => Math.round(n(monthData[key]) * ratio);
+  [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.writeoffs,...STRUCTURE.tax].forEach(({key}) => {
+    result[key] = prorate(key);
+  });
+  // salaryKitchen уже прорачен через STRUCTURE.salaries, отдельно не нужно
+  return result;
+};
+
+// ════════════════════════════════════════════════
+// P&L TABLE
+// ════════════════════════════════════════════════
+function PnLTable({ columns }) {
+  if (!columns.length) return null;
+  const pnls = columns.map(c => c.pnl);
+
+  const Row = ({ label, values, bold, indent, topBorder, bg, colorAuto }) => (
+    <tr className={`${topBorder ? 'border-t-2 border-gray-800' : 'border-b border-gray-100'} ${bg || ''}`}>
+      <td className={`py-1.5 pr-4 ${indent ? 'pl-6 text-gray-500' : 'pl-2 text-gray-700'} text-sm whitespace-nowrap ${bold ? 'font-bold text-gray-900' : ''}`}>{label}</td>
+      {values.map((v, i) => (
+        <td key={i} className={`py-1.5 px-2 text-right text-sm tabular-nums whitespace-nowrap ${bold ? 'font-bold' : ''} ${colorAuto ? (v < 0 ? 'text-red-600 font-semibold' : 'text-gray-900') : 'text-gray-900'}`}>
+          {v != null ? fmt(v) : ''}
+        </td>
+      ))}
+    </tr>
+  );
+
+  const Section = ({ label, values }) => (
+    <tr className="border-t border-gray-300 bg-gray-50">
+      <td className="py-2 pl-2 pr-4 text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</td>
+      {values.map((v,i) => <td key={i} className="py-2 px-2 text-right text-xs font-bold text-gray-700 tabular-nums">{v != null ? fmt(v) : ''}</td>)}
+    </tr>
+  );
+
+  const vals = (fn) => pnls.map(p => p ? fn(p) : null);
+  const itemVals = (key) => pnls.map(p => p?.d ? n(p.d[key]) : null);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b-2 border-gray-800">
+            <th className="py-2 pl-2 pr-4 text-left text-xs font-bold text-gray-400 uppercase w-52">WELCOME DRINK</th>
+            {columns.map((c,i) => <th key={i} className="py-2 px-2 text-right text-sm font-bold text-gray-700 min-w-24">{c.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {/* ── ДОХОДЫ ── */}
+          <Section label="Доходы" values={vals(p => p.revenue)} />
+          <Row label="Оборот" values={vals(p => p.revenue)} indent />
+
+          {/* ── СЕБЕСТОИМОСТЬ ── */}
+          <Row label="Себестоимость (фудкост)" values={vals(p => p.foodcost)} indent />
+
+          {/* ── МАРЖИНАЛЬНАЯ ПРИБЫЛЬ ── */}
+          <Row label="Маржинальная прибыль" values={vals(p => p.grossProfit)} bold topBorder bg="bg-indigo-50" colorAuto />
+
+          {/* ── FIX COST ── */}
+          <Section label="Постоянные расходы (Fix Cost)" values={vals(p => p.fixTotal)} />
+          {STRUCTURE.fixCost.map(item => <Row key={item.key} label={item.name} values={itemVals(item.key)} indent />)}
+
+          {/* ── МАРКЕТИНГ ── */}
+          <Section label="Маркетинг" values={vals(p => p.mktTotal)} />
+          {STRUCTURE.marketing.map(item => <Row key={item.key} label={item.name} values={itemVals(item.key)} indent />)}
+
+          {/* ── ЗАРПЛАТЫ ── */}
+          <Section label="Зарплаты" values={vals(p => p.salTotal)} />
+          {STRUCTURE.salaries.map(item => <Row key={item.key} label={item.name} values={itemVals(item.key)} indent />)}
+
+          {/* ── УПРАВЛЕНЧЕСКИЕ ── */}
+          <Section label="Управленческие расходы" values={vals(p => p.mgmtTotal)} />
+          {STRUCTURE.management.map(item => <Row key={item.key} label={item.name} values={itemVals(item.key)} indent />)}
+
+          {/* ── СПИСАНИЯ ── */}
+          <Section label="Списания" values={vals(p => p.woTotal)} />
+          {STRUCTURE.writeoffs.map(item => <Row key={item.key} label={item.name} values={itemVals(item.key)} indent colorAuto />)}
+
+          {/* ── ПРИБЫЛЬ ДО НАЛОГОВ ── */}
+          <Row label="Прибыль до налогов" values={vals(p => p.profitBeforeTax)} bold topBorder bg="bg-amber-50" colorAuto />
+
+          {/* ── НАЛОГИ ── */}
+          <Row label="Налоги" values={vals(p => p.taxTotal)} indent />
+
+          {/* ── ЧИСТАЯ ПРИБЫЛЬ ── */}
+          <Row label="ЧИСТАЯ ПРИБЫЛЬ" values={vals(p => p.netProfit)} bold topBorder bg={pnls.some(p=>p&&p.netProfit<0) ? 'bg-red-50' : 'bg-emerald-50'} colorAuto />
+
+          {/* ── KPI ── */}
+          <tr className="border-t-2 border-gray-800 bg-gray-900">
+            <td colSpan={columns.length+1} className="py-2 pl-2 text-xs font-bold text-white uppercase tracking-wider">KPI</td>
+          </tr>
+          <Row label="Фудкост %" values={vals(p => +(p.foodcostPct*100).toFixed(2))} bg="bg-gray-50" />
+          <Row label="Рентабельность %" values={vals(p => +(p.profitability*100).toFixed(2))} bg="bg-gray-50" colorAuto />
+          <Row label="ФОТ %" values={vals(p => +(p.fotPct*100).toFixed(2))} bg="bg-gray-50" />
+          <Row label="Contribution Margin" values={vals(p => p.contributionMargin)} bg="bg-gray-50" />
+          <Row label="CM %" values={vals(p => +(p.cmPct*100).toFixed(2))} bg="bg-gray-50" />
+          <Row label="ТБУ" values={vals(p => p.tbu)} bold bg="bg-gray-50" />
+
+          {/* ── КУХНЯ ── */}
+          <tr className="border-t-2 border-gray-800 bg-orange-900">
+            <td colSpan={columns.length+1} className="py-2 pl-2 text-xs font-bold text-white uppercase tracking-wider">Кухня (отдельно)</td>
+          </tr>
+          <Row label="Оборот кухня" values={itemVals('kitchenRevenue')} bg="bg-orange-50" />
+          <Row label="Фудкост кухня" values={itemVals('kitchenFoodcost')} bg="bg-orange-50" />
+          <Row label="ЗП кухня" values={itemVals('salaryKitchen')} bg="bg-orange-50" />
+          <Row label="Прибыль кухня" values={vals(p => p.kitProfit)} bold bg="bg-orange-50" colorAuto />
+          <Row label="Фудкост кухня %" values={vals(p => p.kitRev > 0 ? +((p.kitFc/p.kitRev)*100).toFixed(2) : 0)} bg="bg-orange-50" />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// TABS
+// ════════════════════════════════════════════════
+function DashboardTab({ data }) {
+  const [periodType, setPeriodType] = useState("year");
+  const [selMonth, setSelMonth] = useState(11);
+  const [dateFrom, setDateFrom] = useState("2025-01-01");
+  const [dateTo, setDateTo] = useState("2025-12-31");
+
+  // Compute data for selected period
+  const periodData = useMemo(() => {
+    if (periodType === "year") return aggMonths(data);
+    if (periodType === "month") return data[selMonth] || null;
+    if (periodType === "week") {
+      const md = data[selMonth];
+      if (!md) return null;
+      // Current week (last 7 days of selected month for demo)
+      const last7 = md.days.slice(-7);
+      return aggDays(last7, md);
+    }
+    if (periodType === "day") {
+      const md = data[selMonth];
+      if (!md) return null;
+      const lastDay = md.days[md.days.length - 1];
+      return aggDays([lastDay], md);
+    }
+    if (periodType === "custom") {
+      const from = new Date(dateFrom);
+      const to = new Date(dateTo);
+      const allDays = [];
+      const monthsUsed = [];
+      data.forEach(md => {
+        md.days.forEach(d => {
+          const dt = new Date(d.date);
+          if (dt >= from && dt <= to) {
+            allDays.push(d);
+            if (!monthsUsed.includes(md.month)) monthsUsed.push(md.month);
+          }
+        });
+      });
+      if (allDays.length === 0) return null;
+      // Weighted aggregate across months
+      const result = { revenueTotal: 0, foodcost: 0, kitchenRevenue: 0, kitchenFoodcost: 0, totalTransactions: 0 };
+      allDays.forEach(d => { result.revenueTotal += d.revenue; result.foodcost += d.foodcost; result.kitchenRevenue += n(d.kitchenRevenue); result.kitchenFoodcost += n(d.kitchenFoodcost); result.totalTransactions += d.transactions; });
+      // Prorate monthly costs
+      const allKeys = [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.writeoffs,...STRUCTURE.tax];
+      allKeys.forEach(({key}) => { result[key] = 0; });
+      monthsUsed.forEach(mi => {
+        const md = data[mi];
+        const mdDaysInRange = allDays.filter(d => { const dm = parseInt(d.date.split('-')[1])-1; return dm === mi; });
+        const ratio = md.revenueTotal > 0 ? mdDaysInRange.reduce((s,d)=>s+d.revenue,0) / md.revenueTotal : 0;
+        allKeys.forEach(({key}) => { result[key] += Math.round(n(md[key]) * ratio); });
+      });
+      return result;
+    }
+    return null;
+  }, [data, periodType, selMonth, dateFrom, dateTo]);
+
+  const yp = computePnL(periodData);
+  if (!yp) return <p className="text-gray-400 text-center py-8">Нет данных за выбранный период</p>;
+
+  const periodLabel = periodType === "year" ? "2025 год" : periodType === "month" ? `${MONTHS[selMonth]} 2025` : periodType === "week" ? `Неделя (${MONTHS[selMonth]})` : periodType === "day" ? `День (${MONTHS[selMonth]})` : `${dateFrom} — ${dateTo}`;
+
+  const chart = data.map((d,i) => {
+    const p = computePnL(d);
+    return { name: MONTHS[i], revenue: p.revenue, gross: p.grossProfit, net: p.netProfit, foodcost: p.foodcost };
+  });
+
+  const expPie = [
+    { name: "Фудкост", value: yp.foodcost },
+    { name: "ЗП + Управление", value: yp.salTotal + yp.mgmtTotal },
+    { name: "Fix Cost", value: yp.fixTotal },
+    { name: "Маркетинг", value: yp.mktTotal },
+    { name: "Списания", value: yp.woTotal },
+    { name: "Налоги", value: yp.taxTotal },
+  ];
+
+  const Card = ({label,value,sub,color}) => {
+    const bg = {green:'bg-emerald-50 border-emerald-200',red:'bg-red-50 border-red-200',indigo:'bg-indigo-50 border-indigo-200',amber:'bg-amber-50 border-amber-200',purple:'bg-purple-50 border-purple-200',cyan:'bg-cyan-50 border-cyan-200'};
+    const tx = {green:'text-emerald-700',red:'text-red-700',indigo:'text-indigo-700',amber:'text-amber-700',purple:'text-purple-700',cyan:'text-cyan-700'};
+    return <div className={`rounded-xl border p-4 ${bg[color]}`}><div className="text-xs text-gray-500 uppercase">{label}</div><div className={`text-xl font-bold mt-1 ${tx[color]}`}>{value}</div>{sub && <div className="text-xs text-gray-500 mt-0.5">{sub}</div>}</div>;
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Period selector */}
+      <div className="bg-white rounded-xl border p-4 flex items-center gap-2 flex-wrap">
+        <span className="text-sm text-gray-500 font-medium mr-1">Период:</span>
+        {[["year","Год"],["month","Месяц"],["week","Неделя"],["day","День"],["custom","Даты"]].map(([id,lb])=>(
+          <button key={id} onClick={()=>setPeriodType(id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${periodType===id?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{lb}</button>
+        ))}
+        {(periodType === "month" || periodType === "week" || periodType === "day") && (
+          <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
+            {MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)}
+          </select>
+        )}
+        {periodType === "custom" && (
+          <div className="flex items-center gap-2 ml-2">
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+            <span className="text-gray-400">—</span>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          </div>
+        )}
+        <span className="ml-auto text-sm font-semibold text-indigo-600">{periodLabel}</span>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Card label="Выручка" value={fmtG(yp.revenue)} color="indigo" />
+        <Card label="Фудкост" value={fmtP(yp.foodcostPct)} sub={fmtG(yp.foodcost)} color="amber" />
+        <Card label="Марж. прибыль" value={fmtG(yp.grossProfit)} sub={fmtP(yp.grossProfit/yp.revenue)} color="purple" />
+        <Card label="Чистая прибыль" value={fmtG(yp.netProfit)} sub={fmtP(yp.profitability)} color={yp.netProfit>=0?'green':'red'} />
+        <Card label="ТБУ" value={fmtG(yp.tbu)} color="amber" />
+        <Card label="Ср. чек" value={fmtG(yp.avgCheck)} sub={`${fmt(yp.totalTransactions)} чеков`} color="cyan" />
+      </div>
+
+      <div className="bg-white rounded-xl border p-6">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Выручка, маржа, чистая прибыль (по месяцам)</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={chart}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="name" /><YAxis tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={v=>fmtG(v)} /><Legend />
+            <Area type="monotone" dataKey="revenue" fill="#c7d2fe" stroke="#6366f1" name="Выручка" />
+            <Bar dataKey="foodcost" fill="#fca5a5" name="Фудкост" radius={[2,2,0,0]} />
+            <Line type="monotone" dataKey="gross" stroke="#f59e0b" strokeWidth={2} name="Марж. прибыль" strokeDasharray="5 5" />
+            <Line type="monotone" dataKey="net" stroke="#10b981" strokeWidth={3} name="Чистая прибыль" dot={{fill:"#10b981",r:4}} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5">
+          <h3 className="font-semibold text-emerald-800 mb-3">Сильные стороны</h3>
+          <div className="space-y-2 text-sm text-emerald-700">
+            {yp.foodcostPct < 0.28 && <p>Фудкост {fmtP(yp.foodcostPct)} — отличный контроль</p>}
+            {yp.cmPct > 0.4 && <p>CM% = {fmtP(yp.cmPct)} — высокая маржинальность</p>}
+            {yp.netProfit > 0 && <p>Бизнес прибыльный: рентабельность {fmtP(yp.profitability)}</p>}
+            {yp.kitProfit > 0 && <p>Кухня прибыльна: {fmtG(yp.kitProfit)}</p>}
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+          <h3 className="font-semibold text-red-800 mb-3">Зоны роста</h3>
+          <div className="space-y-2 text-sm text-red-700">
+            {yp.fotPct > 0.25 && <p>ФОТ {fmtP(yp.fotPct)} — выше 25%</p>}
+            {yp.foodcostPct > 0.28 && <p>Фудкост {fmtP(yp.foodcostPct)} — можно оптимизировать</p>}
+            {yp.mktTotal/yp.revenue > 0.05 && <p>Маркетинг {fmtP(yp.mktTotal/yp.revenue)} от выручки</p>}
+            {yp.woTotal > yp.revenue*0.02 && <p>Списания {fmtG(yp.woTotal)} — более 2% выручки</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border p-6">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Структура расходов ({periodLabel})</h3>
+        <ResponsiveContainer width="100%" height={280}>
+          <PieChart>
+            <Pie data={expPie} cx="50%" cy="50%" innerRadius={60} outerRadius={110} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`}>
+              {expPie.map((_,i) => <Cell key={i} fill={COLORS[i]} />)}
+            </Pie>
+            <Tooltip formatter={v=>fmtG(v)} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function PnLTab({ data }) {
+  const [view, setView] = useState("months");
+  const [selMonth, setSelMonth] = useState(11);
+
+  const monthCols = useMemo(() => data.map((d,i) => ({label: MONTHS[i], pnl: computePnL(d)})), [data]);
+
+  const weekCols = useMemo(() => {
+    const md = data[selMonth]; if (!md) return [];
+    const weeks = []; let buf = []; let wn = 1;
+    md.days.forEach((d,i) => {
+      buf.push(d);
+      if (d.dow === 6 || i === md.days.length - 1) {
+        weeks.push({label:`Нед ${wn}`, pnl: computePnL(aggDays(buf, md))});
+        buf = []; wn++;
+      }
+    });
+    return weeks;
+  }, [data, selMonth]);
+
+  const dayCols = useMemo(() => {
+    const md = data[selMonth]; if (!md) return [];
+    return md.days.map(d => ({label:`${d.date.split('-')[2]} ${DAYS_RU[d.dow]}`, pnl: computePnL(aggDays([d], md))}));
+  }, [data, selMonth]);
+
+  const cols = view==="months" ? monthCols : view==="weeks" ? weekCols : dayCols;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        {[["months","Месяцы"],["weeks","Недели"],["days","Дни"]].map(([id,lb]) => (
+          <button key={id} onClick={()=>setView(id)} className={`px-4 py-2 rounded-lg text-sm font-medium ${view===id?'bg-indigo-600 text-white':'bg-white border text-gray-600 hover:bg-gray-50'}`}>{lb}</button>
+        ))}
+        {view !== "months" && <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="ml-auto border rounded px-3 py-2 text-sm">{MONTHS.map((m,i) => <option key={i} value={i}>{m} 2025</option>)}</select>}
+      </div>
+      <div className="bg-white rounded-xl border p-4"><PnLTable columns={cols} /></div>
+    </div>
+  );
+}
+
+function DayOfWeekTab({ data }) {
+  const [periodType, setPeriodType] = useState("year");
+  const [selMonth, setSelMonth] = useState(0);
+  const [dateFrom, setDateFrom] = useState("2025-01-01");
+  const [dateTo, setDateTo] = useState("2025-12-31");
+
+  // Collect all days from selected period (no useMemo - direct calc)
+  let allDays = [];
+  let refMonth = data[0];
+
+  if (periodType === "year") {
+    data.forEach(md => { if (md && md.days) md.days.forEach(d => allDays.push(d)); });
+  } else if (periodType === "month") {
+    const md = data[selMonth];
+    if (md && md.days) { allDays = md.days; refMonth = md; }
+  } else if (periodType === "quarter") {
+    const qStart = Math.floor(selMonth / 3) * 3;
+    for (let i = qStart; i < qStart + 3 && i < data.length; i++) {
+      if (data[i] && data[i].days) data[i].days.forEach(d => allDays.push(d));
+    }
+    refMonth = data[qStart] || data[0];
+  } else if (periodType === "custom") {
+    const from = new Date(dateFrom);
+    const to = new Date(dateTo);
+    data.forEach(md => {
+      if (md && md.days) md.days.forEach(d => {
+        const dt = new Date(d.date);
+        if (dt >= from && dt <= to) allDays.push(d);
+      });
+    });
+  }
+
+  const periodLabel = periodType === "year" ? "2025 год" : periodType === "month" ? `${MONTHS[selMonth]} 2025` : periodType === "quarter" ? `Q${Math.floor(selMonth/3)+1} 2025` : `${dateFrom} — ${dateTo}`;
+
+  // Group by day of week
+  const buckets = [[], [], [], [], [], [], []];
+  allDays.forEach(d => { if (d.dow >= 0 && d.dow < 7) buckets[d.dow].push(d); });
+
+  const dowCols = DAYS_RU.map((name, i) => {
+    const days = buckets[i];
+    if (!days.length) return null;
+    const avgRev = Math.round(days.reduce((s,d) => s + d.revenue, 0) / days.length);
+    const avgFc = Math.round(days.reduce((s,d) => s + d.foodcost, 0) / days.length);
+    const avgKitRev = Math.round(days.reduce((s,d) => s + n(d.kitchenRevenue), 0) / days.length);
+    const avgKitFc = Math.round(days.reduce((s,d) => s + n(d.kitchenFoodcost), 0) / days.length);
+    const avgTx = Math.round(days.reduce((s,d) => s + d.transactions, 0) / days.length);
+    const dayShare = 1 / 30;
+    const result = { revenueTotal: avgRev, foodcost: avgFc, kitchenRevenue: avgKitRev, kitchenFoodcost: avgKitFc, totalTransactions: avgTx };
+    [...STRUCTURE.fixCost, ...STRUCTURE.marketing, ...STRUCTURE.salaries, ...STRUCTURE.management, ...STRUCTURE.writeoffs, ...STRUCTURE.tax].forEach(({ key }) => {
+      result[key] = Math.round(n(refMonth[key]) * dayShare);
+    });
+    // salaryKitchen уже прорачен через STRUCTURE.salaries
+    return { label: `${name} (ср.)`, pnl: computePnL(result), count: days.length, avgRev };
+  }).filter(Boolean);
+
+  const chartData = dowCols.map(c => ({ name: c.label.replace(' (ср.)', ''), revenue: c.pnl.revenue, profit: c.pnl.netProfit, foodcost: c.pnl.foodcost }));
+
+  const best = dowCols.length > 0 ? dowCols.reduce((a, b) => a.avgRev > b.avgRev ? a : b) : {};
+  const worst = dowCols.length > 0 ? dowCols.reduce((a, b) => a.avgRev < b.avgRev ? a : b) : {};
+
+  return (
+    <div className="space-y-4">
+      {/* Period selector */}
+      <div className="bg-white rounded-xl border p-4 flex items-center gap-2 flex-wrap">
+        <span className="text-sm text-gray-500 font-medium mr-1">Период:</span>
+        {[["year","Год"],["quarter","Квартал"],["month","Месяц"],["custom","Даты"]].map(([id,lb])=>(
+          <button key={id} onClick={()=>setPeriodType(id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${periodType===id?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{lb}</button>
+        ))}
+        {(periodType === "month" || periodType === "quarter") && (
+          <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
+            {periodType === "month"
+              ? MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)
+              : [0,3,6,9].map(q=><option key={q} value={q}>Q{q/3+1} 2025</option>)
+            }
+          </select>
+        )}
+        {periodType === "custom" && (
+          <div className="flex items-center gap-2 ml-2">
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+            <span className="text-gray-400">—</span>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          </div>
+        )}
+        <span className="ml-auto text-sm font-semibold text-indigo-600">{periodLabel}</span>
+      </div>
+
+      {/* Quick stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="rounded-xl border p-4 bg-emerald-50 border-emerald-200">
+          <div className="text-xs text-gray-500 uppercase">Лучший день</div>
+          <div className="text-xl font-bold text-emerald-700 mt-1">{best.label?.replace(' (ср.)','') || '—'} — {fmtG(best.avgRev)}</div>
+          <div className="text-xs text-gray-500">{best.count || 0} дней в выборке</div>
+        </div>
+        <div className="rounded-xl border p-4 bg-red-50 border-red-200">
+          <div className="text-xs text-gray-500 uppercase">Слабый день</div>
+          <div className="text-xl font-bold text-red-700 mt-1">{worst.label?.replace(' (ср.)','') || '—'} — {fmtG(worst.avgRev)}</div>
+          <div className="text-xs text-gray-500">{worst.count || 0} дней в выборке</div>
+        </div>
+        <div className="rounded-xl border p-4 bg-indigo-50 border-indigo-200">
+          <div className="text-xs text-gray-500 uppercase">Разница</div>
+          <div className="text-xl font-bold text-indigo-700 mt-1">{fmtG((best.avgRev||0)-(worst.avgRev||0))}</div>
+          <div className="text-xs text-gray-500">{(best.avgRev||1) > 0 && (worst.avgRev||1) > 0 ? `x${((best.avgRev||1)/(worst.avgRev||1)).toFixed(1)}` : ''}</div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border p-6">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Средние показатели по дням недели — {periodLabel}</h3>
+        <ResponsiveContainer width="100%" height={280}>
+          <ComposedChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="name" /><YAxis tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={v=>fmtG(v)} /><Legend />
+            <Bar dataKey="revenue" fill="#6366f1" name="Выручка" radius={[4,4,0,0]} />
+            <Bar dataKey="foodcost" fill="#ef4444" name="Фудкост" radius={[4,4,0,0]} />
+            <Line type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={3} name="Чистая прибыль" dot={{fill:"#10b981"}} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="bg-white rounded-xl border p-4"><PnLTable columns={dowCols} /></div>
+    </div>
+  );
+}
+
+function ForecastTab({ data }) {
+  const [base, setBase] = useState(11);
+  const [showTax, setShowTax] = useState(false);
+  const [p, setP] = useState({rev:0,cogs:0,fix:0,sal:0,mkt:0,months:6});
+  const [tx, setTx] = useState({vat:18,salTax:0,rentTax:0});
+
+  const bp = computePnL(data[base]);
+  if (!bp) return null;
+
+  const forecast = [];
+  for (let i = 0; i < p.months; i++) {
+    const g = Math.pow(1+p.rev/100,i+1);
+    const d = {...data[base]};
+    d.revenueTotal = Math.round(bp.revenue * g);
+    d.foodcost = Math.round(bp.foodcost * g * (1+p.cogs/100));
+    STRUCTURE.fixCost.forEach(({key})=>{d[key]=Math.round(n(data[base][key])*(1+p.fix/100));});
+    STRUCTURE.salaries.forEach(({key})=>{d[key]=Math.round(n(data[base][key])*(1+p.sal/100));});
+    STRUCTURE.management.forEach(({key})=>{d[key]=Math.round(n(data[base][key])*(1+p.sal/100));});
+    STRUCTURE.marketing.forEach(({key})=>{d[key]=Math.round(n(data[base][key])*(1+p.mkt/100));});
+    if (showTax) d.tax = Math.round(d.revenueTotal*tx.vat/100)+tx.salTax+tx.rentTax;
+    d.kitchenRevenue = Math.round(n(data[base].kitchenRevenue)*g);
+    d.kitchenFoodcost = Math.round(n(data[base].kitchenFoodcost)*g*(1+p.cogs/100));
+    // salaryKitchen уже обновлён через STRUCTURE.salaries
+    forecast.push({label:`М+${i+1}`, pnl: computePnL(d)});
+  }
+
+  const Sl = ({label,value,onChange,min,max,step=1,suffix="%"}) => (
+    <div className="flex items-center gap-3">
+      <span className="text-sm text-gray-600 w-48">{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(Number(e.target.value))} className="flex-1 accent-indigo-600" />
+      <span className={`text-sm font-bold w-16 text-right ${value>0?'text-emerald-600':value<0?'text-red-600':'text-gray-600'}`}>{value>0?'+':''}{value}{suffix}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+          <h3 className="text-lg font-semibold">Прогнозирование</h3>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={showTax} onChange={e=>setShowTax(e.target.checked)} className="w-4 h-4 accent-indigo-600" /><span className="text-sm text-gray-600">Учитывать налоги</span></label>
+            <select value={base} onChange={e=>setBase(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm">{MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)}</select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {[["Базовая выручка",fmtG(bp.revenue),"indigo"],["ТБУ",fmtG(bp.tbu),"amber"],["Запас прочности",fmtG(bp.revenue-bp.tbu),bp.revenue>bp.tbu?"green":"red"],["Рентабельность",fmtP(bp.profitability),"purple"]].map(([l,v,c],i)=>(
+            <div key={i} className={`rounded-xl border p-3 bg-${c==='green'?'emerald':c}-50 border-${c==='green'?'emerald':c}-200`}><div className="text-xs text-gray-500">{l}</div><div className={`text-lg font-bold text-${c==='green'?'emerald':c}-700`}>{v}</div></div>
+          ))}
+        </div>
+        <div className="space-y-3 bg-gray-50 rounded-lg p-4 mb-4">
+          <Sl label="Рост выручки / мес" value={p.rev} onChange={v=>setP({...p,rev:v})} min={-20} max={30} />
+          <Sl label="Изменение фудкоста" value={p.cogs} onChange={v=>setP({...p,cogs:v})} min={-20} max={30} />
+          <Sl label="Изменение Fix Cost" value={p.fix} onChange={v=>setP({...p,fix:v})} min={-30} max={30} />
+          <Sl label="Изменение ЗП" value={p.sal} onChange={v=>setP({...p,sal:v})} min={-20} max={30} />
+          <Sl label="Изменение маркетинга" value={p.mkt} onChange={v=>setP({...p,mkt:v})} min={-50} max={50} />
+          <Sl label="Кол-во месяцев" value={p.months} onChange={v=>setP({...p,months:v})} min={1} max={12} step={1} suffix="" />
+        </div>
+        {showTax && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+            <h4 className="text-sm font-semibold text-amber-700 mb-3">Налоговая нагрузка</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div><label className="text-xs text-gray-500 block mb-1">НДС %</label><input type="number" value={tx.vat} onChange={e=>setTx({...tx,vat:Number(e.target.value)})} className="border rounded px-3 py-2 w-full" /></div>
+              <div><label className="text-xs text-gray-500 block mb-1">Налог на ЗП ₾/мес</label><input type="number" value={tx.salTax} onChange={e=>setTx({...tx,salTax:Number(e.target.value)})} className="border rounded px-3 py-2 w-full" /></div>
+              <div><label className="text-xs text-gray-500 block mb-1">Налог с аренды ₾/мес</label><input type="number" value={tx.rentTax} onChange={e=>setTx({...tx,rentTax:Number(e.target.value)})} className="border rounded px-3 py-2 w-full" /></div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="bg-white rounded-xl border p-4"><PnLTable columns={forecast} /></div>
+      <div className="bg-white rounded-xl border p-6">
+        <ResponsiveContainer width="100%" height={280}>
+          <ComposedChart data={forecast.map(f=>({name:f.label,revenue:f.pnl.revenue,gross:f.pnl.grossProfit,net:f.pnl.netProfit}))}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="name" /><YAxis tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={v=>fmtG(v)} /><Legend />
+            <Bar dataKey="revenue" fill="#6366f1" name="Выручка" radius={[4,4,0,0]} />
+            <Bar dataKey="gross" fill="#f59e0b" name="Марж. прибыль" radius={[4,4,0,0]} />
+            <Line type="monotone" dataKey="net" stroke="#10b981" strokeWidth={3} name="Чистая прибыль" dot={{fill:"#10b981"}} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function SyncTab() {
+  const [syncing, setSyncing] = useState(false);
+  const [items, setItems] = useState([]);
+  const [log, setLog] = useState([]);
+  const cats = ["Фудкост","Коммуналка","Уборка","Лед","Хозтовары","Маркетинг","Прочее"];
+
+  const sync = () => {
+    setSyncing(true);
+    setTimeout(() => {
+      setItems([
+        {id:1,date:"2025-12-28",desc:"Молоко 3л",amount:45,cat:"Фудкост",skip:false},
+        {id:2,date:"2025-12-28",desc:"Средство для мытья",amount:35,cat:"Хозтовары",skip:false},
+        {id:3,date:"2025-12-27",desc:"Лимоны 5кг",amount:30,cat:"Фудкост",skip:false},
+        {id:4,date:"2025-12-27",desc:"Водка Absolut 6бут",amount:420,cat:"Фудкост",skip:false},
+        {id:5,date:"2025-12-26",desc:"Лед 20кг",amount:60,cat:"Лед",skip:false},
+        {id:6,date:"2025-12-26",desc:"Оплата уборки",amount:150,cat:"Уборка",skip:false},
+      ]);
+      setSyncing(false);
+    }, 1500);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center justify-between">
+          <div><h3 className="text-lg font-semibold">Синхронизация с Poster POS</h3><p className="text-sm text-gray-500 mt-1">Продажи + себестоимость + транзакции</p></div>
+          <button onClick={sync} disabled={syncing} className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">{syncing?'Загрузка...':'Синхронизировать'}</button>
+        </div>
+      </div>
+      {items.length > 0 && (
+        <div className="bg-white rounded-xl border p-6">
+          <h3 className="font-semibold mb-4">Проверка данных</h3>
+          <table className="w-full text-sm mb-4">
+            <thead><tr className="border-b text-left text-gray-500"><th className="pb-2">Дата</th><th className="pb-2">Описание</th><th className="pb-2 text-right">Сумма</th><th className="pb-2">Категория</th><th className="pb-2"></th></tr></thead>
+            <tbody>{items.map(it=>(
+              <tr key={it.id} className={`border-b ${it.skip?'opacity-40':''}`}>
+                <td className="py-2 text-gray-600">{it.date}</td><td className="py-2">{it.desc}</td><td className="py-2 text-right">{fmtG(it.amount)}</td>
+                <td className="py-2"><select value={it.cat} onChange={e=>setItems(p=>p.map(x=>x.id===it.id?{...x,cat:e.target.value}:x))} className="border rounded px-2 py-1 text-sm">{cats.map(c=><option key={c}>{c}</option>)}</select></td>
+                <td className="py-2 text-right"><button onClick={()=>setItems(p=>p.map(x=>x.id===it.id?{...x,skip:!x.skip}:x))} className={`px-3 py-1 rounded text-xs ${it.skip?'bg-gray-200':'bg-red-100 text-red-600'}`}>{it.skip?'Вернуть':'Пропустить'}</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <div className="flex justify-between items-center pt-4 border-t">
+            <span className="text-sm text-gray-500">Добавить: {items.filter(i=>!i.skip).length} на {fmtG(items.filter(i=>!i.skip).reduce((s,i)=>s+i.amount,0))}</span>
+            <div className="flex gap-2">
+              <button onClick={()=>setItems([])} className="px-4 py-2 border rounded-lg text-gray-600">Отмена</button>
+              <button onClick={()=>{setLog(p=>[...p,{date:new Date().toLocaleString("ru-RU"),count:items.filter(i=>!i.skip).length,total:items.filter(i=>!i.skip).reduce((s,i)=>s+i.amount,0)}]);setItems([]);}} className="px-4 py-2 bg-emerald-600 text-white rounded-lg">Подтвердить</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {log.length > 0 && <div className="bg-white rounded-xl border p-6"><h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">История</h3>{log.slice(-5).reverse().map((l,i)=><div key={i} className="flex justify-between py-2 border-b text-sm"><span>{l.date}</span><span>{l.count} записей</span><span>{fmtG(l.total)}</span></div>)}</div>}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// ПОСТОЯННЫЕ РАСХОДЫ — ввод и управление
+// ════════════════════════════════════════════════
+function FixedCostsTab({ data, onUpdateMonth }) {
+  const [selMonth, setSelMonth] = useState(new Date().getMonth());
+  const [editing, setEditing] = useState(null); // key being edited
+  const [confirmed, setConfirmed] = useState({});
+
+  // Only truly FIXED costs belong here — same amount every month
+  const editGroups = [
+    { label: "ПОСТОЯННЫЕ РАСХОДЫ (FIX COST)", items: STRUCTURE.fixCost, color: "indigo" },
+  ];
+
+  const md = data[selMonth];
+  if (!md) return null;
+
+  const [localValues, setLocalValues] = useState({});
+
+  // Initialize local values from data when month changes
+  const getVal = (key) => localValues[`${selMonth}:${key}`] != null ? localValues[`${selMonth}:${key}`] : n(md[key]);
+  const setVal = (key, val) => setLocalValues(prev => ({...prev, [`${selMonth}:${key}`]: Number(val)}));
+
+  const isConfirmed = (key) => confirmed[`${selMonth}:${key}`] === true;
+  const toggleConfirm = (key) => setConfirmed(prev => ({...prev, [`${selMonth}:${key}`]: !prev[`${selMonth}:${key}`]}));
+
+  const allItems = editGroups.flatMap(g => g.items);
+  const totalConfirmed = allItems.filter(item => isConfirmed(item.key)).length;
+  const totalItems = allItems.length;
+  const allDone = totalConfirmed === totalItems;
+
+  const confirmAll = () => {
+    const next = {...confirmed};
+    allItems.forEach(item => { next[`${selMonth}:${item.key}`] = true; });
+    setConfirmed(next);
+  };
+
+  const totalExpenses = allItems.reduce((s, item) => s + getVal(item.key), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+        Здесь вводятся только фиксированные расходы — суммы, которые одинаковые каждый месяц (аренда, Poster и т.д.).
+        Введите сумму за месяц → она автоматически разнесётся на недели и дни пропорционально выручке.
+        Подтверждение (✓) = сумма зафиксирована и применена к текущему и всем будущим месяцам.
+        Остальные расходы (маркетинг, зарплаты, списания и т.д.) вводятся во вкладке «Расходы» — они меняются каждый месяц.
+      </div>
+
+      <div className="bg-white rounded-xl border p-4 flex items-center gap-4 flex-wrap">
+        <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-2 text-sm font-medium">
+          {MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)}
+        </select>
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${allDone ? 'bg-emerald-500' : 'bg-amber-400'}`}></div>
+          <span className="text-sm text-gray-600">Подтверждено: {totalConfirmed} / {totalItems}</span>
+        </div>
+        {!allDone && <button onClick={confirmAll} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 ml-auto">Подтвердить все</button>}
+        {allDone && <span className="ml-auto text-emerald-600 text-sm font-semibold">Все данные подтверждены</span>}
+        <div className="text-sm font-bold text-gray-700">Итого: {fmtG(totalExpenses)}</div>
+      </div>
+
+      {editGroups.map((group, gi) => (
+        <div key={gi} className="bg-white rounded-xl border overflow-hidden">
+          <div className={`px-4 py-2 bg-gray-50 border-b`}>
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{group.label}</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b text-left text-gray-400 text-xs">
+              <th className="py-2 pl-4 pr-2 w-8"></th>
+              <th className="py-2 pr-4">Статья</th>
+              <th className="py-2 pr-4 text-right w-36">Сумма (₾/мес)</th>
+              <th className="py-2 pr-4 text-right w-28">За день</th>
+              <th className="py-2 pr-4 w-20"></th>
+            </tr></thead>
+            <tbody>
+              {group.items.map(item => {
+                const val = getVal(item.key);
+                const daysInMonth = new Date(2025, selMonth+1, 0).getDate();
+                const perDay = Math.round(val / daysInMonth);
+                const conf = isConfirmed(item.key);
+                const isEdit = editing === item.key;
+                return (
+                  <tr key={item.key} className={`border-b ${conf ? 'bg-emerald-50' : ''} hover:bg-gray-50`}>
+                    <td className="py-2 pl-4 pr-2">
+                      <button onClick={()=>toggleConfirm(item.key)} className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${conf ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-gray-400'}`}>
+                        {conf ? '✓' : ''}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-4 font-medium text-gray-700">{item.name}</td>
+                    <td className="py-2 pr-4 text-right">
+                      {isEdit ? (
+                        <input type="number" value={val} onChange={e=>setVal(item.key, e.target.value)} onBlur={()=>setEditing(null)} onKeyDown={e=>e.key==='Enter'&&setEditing(null)} autoFocus className="border rounded px-2 py-1 w-28 text-right text-sm" />
+                      ) : (
+                        <span className={`cursor-pointer hover:underline ${val === 0 ? 'text-gray-300' : 'text-gray-900 font-medium'}`} onClick={()=>setEditing(item.key)}>
+                          {fmt(val)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-right text-gray-400">{fmt(perDay)}</td>
+                    <td className="py-2 pr-4 text-right">
+                      <button onClick={()=>setEditing(isEdit ? null : item.key)} className="text-indigo-500 hover:text-indigo-700 text-xs">
+                        {isEdit ? '✓' : '✎'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      <div className="bg-white rounded-xl border p-4 flex items-center justify-between">
+        <div>
+          <span className="text-sm text-gray-500">Итого расходов за {MONTHS[selMonth]}:</span>
+          <span className="text-lg font-bold text-gray-900 ml-2">{fmtG(totalExpenses)}</span>
+        </div>
+        <div className="text-sm text-gray-400">
+          Выручка: {fmtG(md.revenueTotal)} | Баланс: <span className={md.revenueTotal - totalExpenses - n(md.foodcost) >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtG(md.revenueTotal - n(md.foodcost) - totalExpenses)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExpensesTab() {
+  const [expenses, setExpenses] = useState([]);
+  const [f, setF] = useState({date:"2025-12-28",desc:"",amount:"",cat:"Прочее"});
+  const cats = ["Фудкост","Аренда","Коммуналка","Уборка","Лед","Маркетинг","ЗП","Такси","Списания","Налоги","Хозтовары","Прочее"];
+  const add = () => {if(!f.desc||!f.amount)return; setExpenses(p=>[...p,{id:Date.now(),...f,amount:Number(f.amount)}]); setF({...f,desc:"",amount:""});};
+  return (
+    <div className="bg-white rounded-xl border p-6">
+      <h3 className="text-lg font-semibold mb-4">Ручной ввод расходов</h3>
+      <div className="flex gap-2 mb-6 flex-wrap">
+        <input type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})} className="border rounded px-3 py-2" />
+        <input placeholder="Описание" value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} className="border rounded px-3 py-2 flex-1 min-w-48" />
+        <input type="number" placeholder="Сумма ₾" value={f.amount} onChange={e=>setF({...f,amount:e.target.value})} className="border rounded px-3 py-2 w-28" />
+        <select value={f.cat} onChange={e=>setF({...f,cat:e.target.value})} className="border rounded px-3 py-2">{cats.map(c=><option key={c}>{c}</option>)}</select>
+        <button onClick={add} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">+ Добавить</button>
+      </div>
+      {expenses.length > 0 ? (
+        <table className="w-full text-sm"><thead><tr className="border-b text-left text-gray-500"><th className="pb-2">Дата</th><th className="pb-2">Описание</th><th className="pb-2">Категория</th><th className="pb-2 text-right">Сумма</th><th className="pb-2"></th></tr></thead>
+        <tbody>{expenses.slice().reverse().map(e=><tr key={e.id} className="border-b"><td className="py-2 text-gray-600">{e.date}</td><td className="py-2">{e.desc}</td><td className="py-2"><span className="px-2 py-0.5 bg-gray-100 rounded text-xs">{e.cat}</span></td><td className="py-2 text-right">{fmtG(e.amount)}</td><td className="py-2 text-right"><button onClick={()=>setExpenses(p=>p.filter(x=>x.id!==e.id))} className="text-red-400 hover:text-red-600 text-xs">✕</button></td></tr>)}</tbody></table>
+      ) : <p className="text-gray-400 text-sm text-center py-8">Нет расходов. Добавьте первый выше.</p>}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// ДДС — Движение Денежных Средств
+// ════════════════════════════════════════════════
+function DDSTab({ data }) {
+  const [filterMonth, setFilterMonth] = useState(11);
+  const [filterType, setFilterType] = useState("all"); // all, income, expense
+  const [filterCat, setFilterCat] = useState("all");
+  const [search, setSearch] = useState("");
+  const [hiddenIds, setHiddenIds] = useState({}); // {monthIdx: Set of hidden ids}
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState({});
+  const [edits, setEdits] = useState({}); // {monthIdx: {id: {category, desc, amount}}}
+
+  const toggleHide = (id) => {
+    setHiddenIds(prev => {
+      const monthSet = new Set(prev[filterMonth] || []);
+      if (monthSet.has(id)) monthSet.delete(id); else monthSet.add(id);
+      return { ...prev, [filterMonth]: monthSet };
+    });
+  };
+
+  const startEdit = (t) => {
+    setEditingId(t.id);
+    setEditDraft({ category: t.category, desc: t.desc, amount: t.amount });
+  };
+
+  const saveEdit = (id) => {
+    setEdits(prev => ({
+      ...prev,
+      [filterMonth]: { ...(prev[filterMonth] || {}), [id]: { ...editDraft } }
+    }));
+    setEditingId(null);
+  };
+
+  const cancelEdit = () => { setEditingId(null); setEditDraft({}); };
+
+  const isHidden = (id) => hiddenIds[filterMonth] && hiddenIds[filterMonth].has(id);
+  const getEdited = (t) => {
+    const e = edits[filterMonth] && edits[filterMonth][t.id];
+    return e ? { ...t, ...e } : t;
+  };
+
+  // Generate all transactions from monthly data
+  const allTransactions = useMemo(() => {
+    const md = data[filterMonth];
+    if (!md) return [];
+    const txs = [];
+    let idCounter = 1;
+
+    // INCOME: daily revenue from Poster
+    md.days.forEach(day => {
+      txs.push({
+        id: idCounter++, date: day.date, type: "income", source: "Poster",
+        category: "Выручка", desc: `Выручка за день (${day.transactions} чеков, ср.чек ${Math.round(day.revenue/day.transactions)} ₾)`,
+        amount: day.revenue,
+      });
+    });
+
+    // EXPENSE: foodcost daily (Poster)
+    md.days.forEach(day => {
+      txs.push({
+        id: idCounter++, date: day.date, type: "expense", source: "Poster",
+        category: "Фудкост", desc: "Себестоимость проданного",
+        amount: day.foodcost,
+      });
+    });
+
+    // EXPENSE: monthly items — spread across month on specific dates
+    const mStr = `2025-${String(filterMonth+1).padStart(2,'0')}`;
+    const addExpense = (day, cat, desc, amount, source="Ручной ввод") => {
+      if (amount === 0) return;
+      txs.push({ id: idCounter++, date: `${mStr}-${String(day).padStart(2,'0')}`, type: "expense", source, category: cat, desc, amount: Math.abs(amount) });
+    };
+    const addAdjust = (day, cat, desc, amount) => {
+      if (amount === 0) return;
+      txs.push({ id: idCounter++, date: `${mStr}-${String(day).padStart(2,'0')}`, type: amount > 0 ? "income" : "expense", source: "Инвентаризация", category: cat, desc: `${desc} ${amount > 0 ? '(излишек)' : '(недостача)'}`, amount: Math.abs(amount) });
+    };
+
+    // Fix Cost
+    addExpense(1, "Аренда", "Аренда помещения", md.rent);
+    addExpense(5, "Коммуналка", "Оплата коммунальных услуг", md.utilities);
+    addExpense(3, "Уборка", "Услуги уборки", md.cleaning);
+    addExpense(2, "Лед", "Закупка льда", md.ice, "Poster");
+    addExpense(1, "Poster", "Подписка Poster POS", md.poster);
+    addExpense(10, "Бухгалтер", "Бухгалтерские услуги", md.accountant);
+    addExpense(1, "Охрана", "Сигнализация", md.security);
+    addExpense(1, "Ароматизация", "Aromaco", md.aroma);
+
+    // Marketing (spread across month)
+    addExpense(5, "Маркетинг", "Яндекс реклама", md.mktYandex);
+    addExpense(5, "Маркетинг", "Google реклама", md.mktGoogle);
+    addExpense(10, "Маркетинг", "TripAdvisor", md.mktTripadvisor);
+    addExpense(8, "Маркетинг", "Инстаграм (таргет)", md.mktInstaTarget);
+    addExpense(15, "Маркетинг", "Инстаграм (паблики)", md.mktInstaPub);
+    addExpense(15, "Маркетинг", "Телеграм (паблики)", md.mktTelegram);
+
+    // Salaries (end of month)
+    const lastDay = new Date(2025, filterMonth+1, 0).getDate();
+    addExpense(lastDay, "ЗП", "ЗП Бар", md.salaryBar, "Google Sheets");
+    addExpense(lastDay, "ЗП", "ЗП Кухня", md.salaryKitchen, "Google Sheets");
+    addExpense(lastDay, "ЗП", "Закупщик", md.salaryBuyer, "Google Sheets");
+    addExpense(15, "ЗП", "Такси (персонал)", md.salaryTaxi);
+
+    // Management
+    addExpense(lastDay, "Управление", "Шеф-повар", md.chefPay);
+    addExpense(lastDay, "Управление", "Бар-менеджер", md.barManagerPay);
+    addExpense(lastDay, "Управление", "SMM-щик", md.smmPay);
+    addExpense(20, "Управление", "Музыканты", md.musiciansPay);
+    addExpense(12, "Управление", "Доставка закупки", md.deliveryCost);
+
+    // Writeoffs
+    addExpense(lastDay, "Списания", "Стаф-питание", md.woStaffFood, "Poster");
+    addExpense(lastDay, "Списания", "Проработка", md.woRnD, "Poster");
+    addExpense(lastDay, "Списания", "Порча", md.woSpoilage, "Poster");
+    if (md.woNoReason > 0) addExpense(lastDay, "Списания", "Без причины", md.woNoReason, "Poster");
+    addAdjust(lastDay, "Списания", "Инвентаризация", md.woInventory);
+
+    // Tax
+    if (md.tax > 0) addExpense(20, "Налоги", "Налоговый платёж", md.tax);
+
+    // Sort by date
+    txs.sort((a,b) => a.date.localeCompare(b.date));
+    return txs;
+  }, [data, filterMonth]);
+
+  // Categories for filter
+  const categories = useMemo(() => {
+    const cats = new Set(allTransactions.map(t => t.category));
+    return ["all", ...Array.from(cats).sort()];
+  }, [allTransactions]);
+
+  // Apply edits, then filter (hidden rows stay visible but marked)
+  const filtered = useMemo(() => {
+    return allTransactions.map(t => getEdited(t)).filter(t => {
+      if (filterType !== "all" && t.type !== filterType) return false;
+      if (filterCat !== "all" && t.category !== filterCat) return false;
+      if (search && !t.desc.toLowerCase().includes(search.toLowerCase()) && !t.category.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [allTransactions, filterType, filterCat, search, edits, filterMonth]);
+
+  // Totals (hidden rows excluded from calculations)
+  const visible = filtered.filter(t => !isHidden(t.id));
+  const hiddenCount = filtered.length - visible.length;
+  const totalIncome = visible.filter(t => t.type === "income").reduce((s,t) => s+t.amount, 0);
+  const totalExpense = visible.filter(t => t.type === "expense").reduce((s,t) => s+t.amount, 0);
+  const balance = totalIncome - totalExpense;
+
+  // Summary by category
+  const byCat = useMemo(() => {
+    const map = {};
+    filtered.forEach(t => {
+      const key = `${t.type}:${t.category}`;
+      if (!map[key]) map[key] = { type: t.type, category: t.category, total: 0, count: 0 };
+      map[key].total += t.amount;
+      map[key].count++;
+    });
+    return Object.values(map).sort((a,b) => b.total - a.total);
+  }, [filtered]);
+
+  // Source badge color
+  const srcColor = (s) => s === "Poster" ? "bg-blue-100 text-blue-700" : s === "Google Sheets" ? "bg-green-100 text-green-700" : s === "Инвентаризация" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600";
+
+  return (
+    <div className="space-y-4">
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="rounded-xl border p-4 bg-emerald-50 border-emerald-200">
+          <div className="text-xs text-gray-500 uppercase">Доходы</div>
+          <div className="text-xl font-bold text-emerald-700 mt-1">{fmtG(totalIncome)}</div>
+          <div className="text-xs text-gray-500">{filtered.filter(t=>t.type==="income").length} транзакций</div>
+        </div>
+        <div className="rounded-xl border p-4 bg-red-50 border-red-200">
+          <div className="text-xs text-gray-500 uppercase">Расходы</div>
+          <div className="text-xl font-bold text-red-700 mt-1">{fmtG(totalExpense)}</div>
+          <div className="text-xs text-gray-500">{filtered.filter(t=>t.type==="expense").length} транзакций</div>
+        </div>
+        <div className={`rounded-xl border p-4 ${balance >= 0 ? 'bg-indigo-50 border-indigo-200' : 'bg-red-50 border-red-200'}`}>
+          <div className="text-xs text-gray-500 uppercase">Баланс</div>
+          <div className={`text-xl font-bold mt-1 ${balance >= 0 ? 'text-indigo-700' : 'text-red-700'}`}>{fmtG(balance)}</div>
+          <div className="text-xs text-gray-500">{MONTHS[filterMonth]} 2025</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white rounded-xl border p-4">
+        <div className="flex gap-2 flex-wrap items-center">
+          <select value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))} className="border rounded px-3 py-2 text-sm">
+            {MONTHS.map((m,i) => <option key={i} value={i}>{m} 2025</option>)}
+          </select>
+          <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="border rounded px-3 py-2 text-sm">
+            <option value="all">Все операции</option>
+            <option value="income">Только доходы</option>
+            <option value="expense">Только расходы</option>
+          </select>
+          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} className="border rounded px-3 py-2 text-sm">
+            <option value="all">Все категории</option>
+            {categories.filter(c=>c!=="all").map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input placeholder="Поиск по описанию..." value={search} onChange={e=>setSearch(e.target.value)} className="border rounded px-3 py-2 text-sm flex-1 min-w-48" />
+          <span className="text-sm text-gray-500 ml-auto">{filtered.length} записей{hiddenCount > 0 ? ` (${hiddenCount} скрыто)` : ''}</span>
+        </div>
+      </div>
+
+      {/* Summary by category */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Итого по категориям</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+          {byCat.map((c,i) => (
+            <div key={i} className={`p-2 rounded-lg border text-sm ${c.type==='income' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+              <div className="font-medium text-gray-700 truncate">{c.category}</div>
+              <div className={`font-bold ${c.type==='income' ? 'text-emerald-700' : 'text-red-700'}`}>{fmtG(c.total)}</div>
+              <div className="text-xs text-gray-400">{c.count} шт</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Transactions table */}
+      <div className="bg-white rounded-xl border p-4">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Все транзакции — {MONTHS[filterMonth]} 2025</h3>
+        <div className="overflow-x-auto max-h-96 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="border-b-2 border-gray-300 text-left text-xs text-gray-500 uppercase">
+                <th className="pb-2 pr-2">Дата</th>
+                <th className="pb-2 pr-2">Тип</th>
+                <th className="pb-2 pr-2">Категория</th>
+                <th className="pb-2 pr-2">Описание</th>
+                <th className="pb-2 pr-2">Источник</th>
+                <th className="pb-2 text-right pr-2">Сумма</th>
+                <th className="pb-2 text-center w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(t => {
+                const hidden = isHidden(t.id);
+                const isEditing = editingId === t.id;
+                return (
+                <tr key={t.id} className={`border-b border-gray-50 hover:bg-gray-50 ${hidden ? 'opacity-40 bg-gray-50' : ''}`}>
+                  <td className="py-1.5 pr-2 text-gray-500 whitespace-nowrap">{t.date.split('-').slice(1).join('.')}</td>
+                  <td className="py-1.5 pr-2">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${t.type==='income' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                      {t.type === 'income' ? '+' : '−'}
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-2 font-medium text-gray-700 whitespace-nowrap">
+                    {isEditing
+                      ? <select value={editDraft.category} onChange={e => setEditDraft({...editDraft, category: e.target.value})} className="border rounded px-1 py-0.5 text-sm">
+                          {categories.filter(c => c !== "all").map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      : t.category}
+                  </td>
+                  <td className="py-1.5 pr-2 text-gray-600">
+                    {isEditing
+                      ? <input value={editDraft.desc} onChange={e => setEditDraft({...editDraft, desc: e.target.value})} className="border rounded px-1 py-0.5 text-sm w-full" />
+                      : t.desc}
+                  </td>
+                  <td className="py-1.5 pr-2"><span className={`px-1.5 py-0.5 rounded text-xs ${srcColor(t.source)}`}>{t.source}</span></td>
+                  <td className={`py-1.5 text-right font-medium tabular-nums whitespace-nowrap pr-2 ${t.type==='income' ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {isEditing
+                      ? <input type="number" value={editDraft.amount} onChange={e => setEditDraft({...editDraft, amount: Number(e.target.value)})} className="border rounded px-1 py-0.5 text-sm w-24 text-right" />
+                      : <>{t.type === 'income' ? '+' : '−'}{fmt(t.amount)} ₾</>}
+                  </td>
+                  <td className="py-1.5 text-center whitespace-nowrap">
+                    {isEditing ? (
+                      <div className="flex gap-1 justify-center">
+                        <button onClick={() => saveEdit(t.id)} className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs hover:bg-emerald-200">✓</button>
+                        <button onClick={cancelEdit} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs hover:bg-gray-200">✕</button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-1 justify-center">
+                        <button onClick={() => startEdit(t)} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs hover:bg-gray-200" title="Редактировать">✎</button>
+                        <button onClick={() => toggleHide(t.id)} className={`px-1.5 py-0.5 rounded text-xs ${hidden ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`} title={hidden ? "Показать" : "Скрыть"}>
+                          {hidden ? '◉' : '◎'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>);
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-gray-800 font-bold">
+                <td colSpan={5} className="py-2 text-gray-700">Итого ({MONTHS[filterMonth]})</td>
+                <td className={`py-2 text-right tabular-nums ${balance >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {balance >= 0 ? '+' : '−'}{fmt(Math.abs(balance))} ₾
+                </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// BLOCK DEFINITIONS (editable via Settings)
+// ════════════════════════════════════════════════
+const DEFAULT_BLOCKS = [
+  { id: "fixCost", name: "Постоянные расходы", color: "indigo", type: "fixed",
+    items: STRUCTURE.fixCost.map(i => ({ ...i })) },
+  { id: "marketing", name: "Маркетинг", color: "purple", type: "variable",
+    items: STRUCTURE.marketing.map(i => ({ ...i })) },
+  { id: "salaries", name: "Зарплаты", color: "cyan", type: "variable",
+    items: STRUCTURE.salaries.map(i => ({ ...i })) },
+  { id: "management", name: "Управленческие", color: "amber", type: "variable",
+    items: STRUCTURE.management.map(i => ({ ...i })) },
+  { id: "writeoffs", name: "Списания", color: "red", type: "variable",
+    items: STRUCTURE.writeoffs.map(i => ({ ...i })) },
+  { id: "tax", name: "Налоги", color: "rose", type: "variable",
+    items: STRUCTURE.tax.map(i => ({ ...i })) },
+  { id: "kitchen", name: "Кухня", color: "orange", type: "variable",
+    items: STRUCTURE.kitchen.map(i => ({ ...i })) },
+];
+
+// ════════════════════════════════════════════════
+// SETTINGS TAB
+// ════════════════════════════════════════════════
+function SettingsTab({ blocks, onUpdateBlocks }) {
+  const [editingItem, setEditingItem] = useState(null); // {blockId, itemIdx}
+  const [draft, setDraft] = useState("");
+  const [newItemBlock, setNewItemBlock] = useState(null);
+  const [newItemKey, setNewItemKey] = useState("");
+  const [newItemName, setNewItemName] = useState("");
+  const [editBlockName, setEditBlockName] = useState(null);
+  const [blockDraft, setBlockDraft] = useState("");
+
+  const typeLabels = { fixed: "Постоянные", variable: "Переменные" };
+  const typeColors = { fixed: "bg-indigo-100 text-indigo-700", variable: "bg-amber-100 text-amber-700" };
+
+  const renameItem = (blockId, itemIdx) => {
+    if (!draft.trim()) return;
+    onUpdateBlocks(blocks.map(b => {
+      if (b.id !== blockId) return b;
+      const items = [...b.items];
+      items[itemIdx] = { ...items[itemIdx], name: draft.trim() };
+      return { ...b, items };
+    }));
+    setEditingItem(null);
+    setDraft("");
+  };
+
+  const removeItem = (blockId, itemIdx) => {
+    onUpdateBlocks(blocks.map(b => {
+      if (b.id !== blockId) return b;
+      return { ...b, items: b.items.filter((_, i) => i !== itemIdx) };
+    }));
+  };
+
+  const moveItem = (fromBlockId, itemIdx, toBlockId) => {
+    let movedItem = null;
+    const updated = blocks.map(b => {
+      if (b.id === fromBlockId) {
+        movedItem = b.items[itemIdx];
+        return { ...b, items: b.items.filter((_, i) => i !== itemIdx) };
+      }
+      return b;
+    });
+    if (!movedItem) return;
+    onUpdateBlocks(updated.map(b => {
+      if (b.id === toBlockId) return { ...b, items: [...b.items, movedItem] };
+      return b;
+    }));
+  };
+
+  const addItem = (blockId) => {
+    if (!newItemName.trim()) return;
+    const key = newItemKey.trim() || newItemName.trim().toLowerCase().replace(/[^a-zа-я0-9]/gi, '_');
+    onUpdateBlocks(blocks.map(b => {
+      if (b.id !== blockId) return b;
+      return { ...b, items: [...b.items, { key, name: newItemName.trim() }] };
+    }));
+    setNewItemBlock(null);
+    setNewItemKey("");
+    setNewItemName("");
+  };
+
+  const toggleBlockType = (blockId) => {
+    onUpdateBlocks(blocks.map(b => {
+      if (b.id !== blockId) return b;
+      return { ...b, type: b.type === "fixed" ? "variable" : "fixed" };
+    }));
+  };
+
+  const renameBlock = (blockId) => {
+    if (!blockDraft.trim()) return;
+    onUpdateBlocks(blocks.map(b => {
+      if (b.id !== blockId) return b;
+      return { ...b, name: blockDraft.trim() };
+    }));
+    setEditBlockName(null);
+    setBlockDraft("");
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        Здесь можно переименовать категории, переместить между блоками, изменить тип блока (постоянные / переменные) или добавить новые статьи расходов.
+      </div>
+
+      {blocks.map(block => (
+        <div key={block.id} className="bg-white rounded-xl border overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b flex items-center gap-2 flex-wrap">
+            {editBlockName === block.id ? (
+              <div className="flex items-center gap-2">
+                <input value={blockDraft} onChange={e => setBlockDraft(e.target.value)} onKeyDown={e => e.key === 'Enter' && renameBlock(block.id)} className="border rounded px-2 py-1 text-sm font-bold" autoFocus />
+                <button onClick={() => renameBlock(block.id)} className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-xs">✓</button>
+                <button onClick={() => setEditBlockName(null)} className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">✕</button>
+              </div>
+            ) : (
+              <h3 className="text-sm font-bold text-gray-700 cursor-pointer hover:text-indigo-600" onClick={() => { setEditBlockName(block.id); setBlockDraft(block.name); }}>
+                {block.name}
+              </h3>
+            )}
+            <button onClick={() => toggleBlockType(block.id)} className={`px-2 py-0.5 rounded text-xs font-medium ${typeColors[block.type]}`}>
+              {typeLabels[block.type]}
+            </button>
+            <span className="text-xs text-gray-400 ml-auto">{block.items.length} статей</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-gray-400">
+                <th className="py-2 pl-4 pr-2 w-8">#</th>
+                <th className="py-2 pr-4">Название</th>
+                <th className="py-2 pr-4 w-32">Ключ</th>
+                <th className="py-2 pr-4 w-40">Переместить в</th>
+                <th className="py-2 pr-4 w-20 text-center">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {block.items.map((item, idx) => (
+                <tr key={item.key} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="py-1.5 pl-4 pr-2 text-gray-400">{idx + 1}</td>
+                  <td className="py-1.5 pr-4">
+                    {editingItem && editingItem.blockId === block.id && editingItem.itemIdx === idx ? (
+                      <div className="flex items-center gap-1">
+                        <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => e.key === 'Enter' && renameItem(block.id, idx)} className="border rounded px-2 py-0.5 text-sm flex-1" autoFocus />
+                        <button onClick={() => renameItem(block.id, idx)} className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">✓</button>
+                        <button onClick={() => setEditingItem(null)} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">✕</button>
+                      </div>
+                    ) : (
+                      <span className="text-gray-700 font-medium cursor-pointer hover:text-indigo-600" onClick={() => { setEditingItem({ blockId: block.id, itemIdx: idx }); setDraft(item.name); }}>
+                        {item.name}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 pr-4 text-gray-400 text-xs font-mono">{item.key}</td>
+                  <td className="py-1.5 pr-4">
+                    <select defaultValue="" onChange={e => { if (e.target.value) moveItem(block.id, idx, e.target.value); e.target.value = ""; }} className="border rounded px-1 py-0.5 text-xs text-gray-500 w-full">
+                      <option value="" disabled>Переместить...</option>
+                      {blocks.filter(b => b.id !== block.id).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-1.5 pr-4 text-center">
+                    <button onClick={() => removeItem(block.id, idx)} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded text-xs hover:bg-red-100" title="Удалить">✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {newItemBlock === block.id ? (
+            <div className="px-4 py-2 border-t bg-gray-50 flex items-center gap-2">
+              <input placeholder="Название статьи" value={newItemName} onChange={e => setNewItemName(e.target.value)} className="border rounded px-2 py-1 text-sm flex-1" autoFocus />
+              <input placeholder="Ключ (авто)" value={newItemKey} onChange={e => setNewItemKey(e.target.value)} className="border rounded px-2 py-1 text-sm w-32 font-mono text-xs" />
+              <button onClick={() => addItem(block.id)} className="px-3 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-700">Добавить</button>
+              <button onClick={() => setNewItemBlock(null)} className="px-3 py-1 bg-gray-200 text-gray-600 rounded text-xs">Отмена</button>
+            </div>
+          ) : (
+            <div className="px-4 py-2 border-t">
+              <button onClick={() => setNewItemBlock(block.id)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">+ Добавить статью</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// GOOGLE SHEETS INTEGRATION
+// ════════════════════════════════════════════════
+const GOOGLE_CLIENT_ID = "26806330411-qsqrkcap9gdq9ddh9q4leeollliuova0.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
+
+const MONTHLY_KEY_ORDER = [
+  "revenueTotal","foodcost","grossProfit",
+  "rent","utilWater","utilTrash","utilElec","ice","poster","bankFees","fixTotal",
+  "mktDesigner","mktMusicians","mktBlogger","mktInsta","mktMaps","mktPhoto","mktTotal",
+  "salaryBar","salaryKitchen","salaryBuyer","salTotal",
+  "chefPay","barManagerPay","deliveryCost","taxi","mgmtTotal",
+  "hhSupplies","hhBarSupplies","hhGeneral","hhCapex","hhTotal",
+  "woStaffFood","woRnD","woSpoilage","woNoReason","woInventory","woTotal",
+  "tax","totalExpenses","profitBeforeTax","netProfit",
+  "foodcostPct","fotPct","profitPct","cmPct","tbu",
+  "kitchenRevenue","kitchenFoodcost","kitchenFcPct","kitchenCM",
+];
+const FORMULA_KEYS = new Set([
+  "grossProfit","fixTotal","mktTotal","salTotal","mgmtTotal","hhTotal","woTotal",
+  "totalExpenses","profitBeforeTax","netProfit","foodcostPct","fotPct","profitPct",
+  "cmPct","tbu","kitchenFcPct","kitchenCM",
+]);
+
+const gsTokenRef = { current: null };
+let gsTokenClient = null;
+
+function initGoogleAuth() {
+  return new Promise((resolve) => {
+    if (typeof google === "undefined" || !google.accounts) {
+      resolve(false); return;
+    }
+    gsTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: SCOPES,
+      callback: (resp) => {
+        if (resp.access_token) { gsTokenRef.current = resp.access_token; }
+      },
+    });
+    resolve(true);
+  });
+}
+
+function gsSignIn() {
+  return new Promise((resolve, reject) => {
+    if (!gsTokenClient) { reject(new Error("Google Auth not initialized")); return; }
+    gsTokenClient.callback = (resp) => {
+      if (resp.error) { reject(new Error(resp.error)); return; }
+      gsTokenRef.current = resp.access_token;
+      resolve(resp.access_token);
+    };
+    gsTokenClient.requestAccessToken({ prompt: "consent" });
+  });
+}
+
+function gsSignOut() {
+  if (gsTokenRef.current) {
+    google.accounts.oauth2.revoke(gsTokenRef.current);
+    gsTokenRef.current = null;
+  }
+}
+
+async function gsRead(spreadsheetId, range) {
+  const token = gsTokenRef.current;
+  if (!token) throw new Error("Not authenticated");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
+  return (await res.json()).values || [];
+}
+
+async function gsWrite(spreadsheetId, range, values) {
+  const token = gsTokenRef.current;
+  if (!token) throw new Error("Not authenticated");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ range, majorDimension: "ROWS", values }),
+  });
+  if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
+  return res.json();
+}
+
+async function gsAppend(spreadsheetId, range, values) {
+  const token = gsTokenRef.current;
+  if (!token) throw new Error("Not authenticated");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ range, majorDimension: "ROWS", values }),
+  });
+  if (!res.ok) throw new Error(`Sheets API error: ${res.status}`);
+  return res.json();
+}
+
+function parseMonthlySheet(rows) {
+  if (!rows || rows.length < 2) return {};
+  const header = rows[0];
+  const data = {};
+  for (let c = 1; c < header.length; c++) {
+    const monthLabel = header[c];
+    const monthData = {};
+    for (let r = 1; r < rows.length; r++) {
+      const key = rows[r][0];
+      if (key && !FORMULA_KEYS.has(key)) {
+        const val = rows[r][c];
+        monthData[key] = val !== undefined && val !== "" ? Number(val) : 0;
+      }
+    }
+    data[monthLabel] = monthData;
+  }
+  return data;
+}
+
+function parseDailySheet(rows) {
+  if (!rows || rows.length < 2) return [];
+  const header = rows[0];
+  return rows.slice(1).filter(r => r[0]).map(r => {
+    const obj = {};
+    header.forEach((h, i) => { obj[h] = r[i] || ""; });
+    return obj;
+  });
+}
+
+function GoogleSheetsTab({ onDataLoaded }) {
+  const [sheetId, setSheetId] = useState(localStorage.getItem("wd_sheet_id") || "");
+  const [status, setStatus] = useState("disconnected");
+  const [log, setLog] = useState([]);
+  const [authReady, setAuthReady] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const addLog = (msg, type = "info") => {
+    setLog(prev => [...prev, { time: new Date().toLocaleTimeString(), msg, type }]);
+  };
+
+  const handleConnect = async () => {
+    try {
+      setLoading(true);
+      if (!authReady) {
+        const ok = await initGoogleAuth();
+        if (!ok) { addLog("Google Identity Services не загружен", "error"); return; }
+        setAuthReady(true);
+      }
+      addLog("Запрос авторизации Google...");
+      await gsSignIn();
+      addLog("Авторизация успешна", "success");
+      setStatus("connected");
+      if (sheetId) localStorage.setItem("wd_sheet_id", sheetId);
+    } catch (e) {
+      addLog(`Ошибка: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDisconnect = () => {
+    gsSignOut();
+    setStatus("disconnected");
+    addLog("Отключено от Google Sheets");
+  };
+
+  const handleReadMonthly = async () => {
+    if (!sheetId) { addLog("Укажите ID таблицы", "error"); return; }
+    try {
+      setLoading(true);
+      addLog("Чтение листа Monthly...");
+      const rows = await gsRead(sheetId, "Monthly!A1:M60");
+      const parsed = parseMonthlySheet(rows);
+      const monthCount = Object.keys(parsed).length;
+      addLog(`Загружено ${monthCount} месяцев`, "success");
+      if (onDataLoaded) onDataLoaded(parsed);
+    } catch (e) {
+      addLog(`Ошибка чтения: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReadDaily = async () => {
+    if (!sheetId) { addLog("Укажите ID таблицы", "error"); return; }
+    try {
+      setLoading(true);
+      addLog("Чтение листа Daily...");
+      const rows = await gsRead(sheetId, "Daily!A1:F1000");
+      const parsed = parseDailySheet(rows);
+      addLog(`Загружено ${parsed.length} записей`, "success");
+    } catch (e) {
+      addLog(`Ошибка чтения: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleWriteTest = async () => {
+    if (!sheetId) { addLog("Укажите ID таблицы", "error"); return; }
+    try {
+      setLoading(true);
+      addLog("Тестовая запись в DDS...");
+      const testRow = [new Date().toISOString().slice(0, 10), "expense", "Тест", "Хозяйственные расходы", "1", "Тестовая запись из приложения"];
+      await gsAppend(sheetId, "DDS!A1", [testRow]);
+      addLog("Запись добавлена в DDS", "success");
+    } catch (e) {
+      addLog(`Ошибка записи: ${e.message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statusColors = { disconnected: "bg-red-100 text-red-700", connected: "bg-green-100 text-green-700" };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-gray-900">Google Sheets</h2>
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusColors[status]}`}>
+          {status === "connected" ? "Подключено" : "Отключено"}
+        </span>
+      </div>
+
+      <div className="bg-white rounded-xl border p-6 space-y-4">
+        <h3 className="font-semibold text-gray-800">Подключение</h3>
+        <div>
+          <label className="block text-sm text-gray-600 mb-1">Spreadsheet ID</label>
+          <input
+            value={sheetId} onChange={e => setSheetId(e.target.value)}
+            placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+            className="w-full border rounded-lg px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-400 mt-1">ID из URL вашей Google Таблицы</p>
+        </div>
+        <div className="flex gap-3">
+          {status === "disconnected" ? (
+            <button onClick={handleConnect} disabled={loading}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+              {loading ? "Подключение..." : "Подключить Google"}
+            </button>
+          ) : (
+            <button onClick={handleDisconnect}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">
+              Отключить
+            </button>
+          )}
+        </div>
+      </div>
+
+      {status === "connected" && (
+        <div className="bg-white rounded-xl border p-6 space-y-4">
+          <h3 className="font-semibold text-gray-800">Операции</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button onClick={handleReadMonthly} disabled={loading}
+              className="px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+              📊 Загрузить Monthly
+            </button>
+            <button onClick={handleReadDaily} disabled={loading}
+              className="px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50">
+              📅 Загрузить Daily
+            </button>
+            <button onClick={handleWriteTest} disabled={loading}
+              className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+              ✏️ Тестовая запись
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border p-6 space-y-4">
+        <h3 className="font-semibold text-gray-800">Инструкция</h3>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800 space-y-2">
+          <p><strong>1.</strong> Создайте Google Таблицу по шаблону (welcome-drink-template.xlsx)</p>
+          <p><strong>2.</strong> Скопируйте Spreadsheet ID из URL</p>
+          <p><strong>3.</strong> Настройте Google Cloud проект с OAuth 2.0 (см. SETUP-GUIDE.md)</p>
+          <p><strong>4.</strong> Замените YOUR_GOOGLE_CLIENT_ID_HERE в коде на ваш Client ID</p>
+          <p><strong>5.</strong> Нажмите "Подключить Google" и разрешите доступ</p>
+        </div>
+      </div>
+
+      {log.length > 0 && (
+        <div className="bg-white rounded-xl border p-6">
+          <h3 className="font-semibold text-gray-800 mb-3">Лог операций</h3>
+          <div className="space-y-1 max-h-60 overflow-y-auto">
+            {log.slice().reverse().map((l, i) => (
+              <div key={i} className={`text-sm font-mono px-2 py-1 rounded ${l.type === "error" ? "bg-red-50 text-red-700" : l.type === "success" ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-600"}`}>
+                <span className="text-gray-400 mr-2">{l.time}</span>{l.msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════
+// MAIN APP
+// ════════════════════════════════════════════════
+function App() {
+  const [tab, setTab] = useState("dashboard");
+  const [data, setData] = useState(genDemo);
+  const [blocks, setBlocks] = useState(DEFAULT_BLOCKS);
+  const [gsConnected, setGsConnected] = useState(false);
+
+  const tabs = [
+    {id:"dashboard",label:"Дашборд",icon:"◉"},
+    {id:"pnl",label:"P&L",icon:"☰"},
+    {id:"dds",label:"ДДС",icon:"⇅"},
+    {id:"dow",label:"Дни недели",icon:"▦"},
+    {id:"forecast",label:"Прогноз",icon:"◷"},
+    {id:"fixcost",label:"Пост. расходы",icon:"₾"},
+    {id:"sync",label:"Синхронизация",icon:"⟳"},
+    {id:"gsheets",label:"Google Sheets",icon:"⊞"},
+    {id:"expenses",label:"Расходы",icon:"+"},
+    {id:"settings",label:"Настройки",icon:"⚙"},
+  ];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">W</div>
+            <div><h1 className="font-bold text-gray-900 text-lg">Welcome Drink</h1><p className="text-xs text-gray-400">P&L Dashboard — Тбилиси</p></div>
+          </div>
+          <div className="text-sm text-gray-500">2025 • GEL (₾)</div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 flex gap-1 overflow-x-auto">
+          {tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-all ${tab===t.id?'border-indigo-600 text-indigo-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>{t.icon} {t.label}</button>)}
+        </div>
+      </div>
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {tab==="dashboard" && <DashboardTab data={data} />}
+        {tab==="pnl" && <PnLTab data={data} />}
+        {tab==="dds" && <DDSTab data={data} />}
+        {tab==="dow" && <DayOfWeekTab data={data} />}
+        {tab==="forecast" && <ForecastTab data={data} />}
+        {tab==="fixcost" && <FixedCostsTab data={data} />}
+        {tab==="sync" && <SyncTab />}
+        {tab==="gsheets" && <GoogleSheetsTab onDataLoaded={(newData) => { setGsConnected(true); }} />}
+        {tab==="expenses" && <ExpensesTab />}
+        {tab==="settings" && <SettingsTab blocks={blocks} onUpdateBlocks={setBlocks} />}
+      </div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v3.3 — {gsConnected ? "Google Sheets подключен" : "демо"}</span><span>Poster POS API • Google Sheets</span></div></div>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
