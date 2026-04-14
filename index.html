@@ -1537,11 +1537,14 @@ async function gsAppend(spreadsheetId, range, values) {
 }
 
 function parseMonthlySheet(rows) {
+  // Expected structure: row 1 header = [key, Статья, 2025-01, 2025-02, ...]
+  // Column A = API key, Column B = Russian label, Columns C+ = months
   if (!rows || rows.length < 2) return {};
   const header = rows[0];
   const data = {};
-  for (let c = 1; c < header.length; c++) {
+  for (let c = 2; c < header.length; c++) {
     const monthLabel = header[c];
+    if (!monthLabel) continue;
     const monthData = {};
     for (let r = 1; r < rows.length; r++) {
       const key = rows[r][0];
@@ -1607,7 +1610,7 @@ function GoogleSheetsTab({ onDataLoaded }) {
     try {
       setLoading(true);
       addLog("Чтение листа Monthly...");
-      const rows = await gsRead(sheetId, "Monthly!A1:M60");
+      const rows = await gsRead(sheetId, "Monthly!A1:AN60");
       const parsed = parseMonthlySheet(rows);
       const monthCount = Object.keys(parsed).length;
       addLog(`Загружено ${monthCount} месяцев`, "success");
