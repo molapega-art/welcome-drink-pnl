@@ -961,7 +961,7 @@ function ExpensesTab() {
 // ════════════════════════════════════════════════
 // ДДС — Движение Денежных Средств
 // ════════════════════════════════════════════════
-function DDSTab({ data, isEditor, editPassword, onReload }) {
+function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealDDS = false }) {
   const [filterMonth, setFilterMonth] = useState(11);
   const [filterType, setFilterType] = useState("all"); // all, income, expense
   const [filterCat, setFilterCat] = useState("all");
@@ -1045,6 +1045,23 @@ function DDSTab({ data, isEditor, editPassword, onReload }) {
 
   // Generate all transactions from monthly data
   const allTransactions = useMemo(() => {
+    // If using real DDS records from Sheets — return those directly, filtered to current month
+    if (useRealDDS) {
+      const year = data[filterMonth]?.year || 2025;
+      const prefix = `${year}-${String(filterMonth + 1).padStart(2, '0')}`;
+      return realDDS
+        .filter(r => r.date && r.date.startsWith(prefix))
+        .map(r => ({
+          id: r.id,
+          date: r.date,
+          type: r.type === "income" ? "income" : "expense",
+          source: "Google Sheets",
+          category: r.subcategory || r.category || "—",
+          desc: r.description || r.category || "",
+          amount: Number(r.amount) || 0,
+          hidden: !!r.hidden,
+        }));
+    }
     const md = data[filterMonth];
     if (!md) return [];
     const txs = [];
@@ -1052,9 +1069,10 @@ function DDSTab({ data, isEditor, editPassword, onReload }) {
 
     // INCOME: daily revenue from Poster
     md.days.forEach(day => {
+      const avg = day.transactions > 0 ? Math.round(day.revenue / day.transactions) : 0;
       txs.push({
         id: idCounter++, date: day.date, type: "income", source: "Poster",
-        category: "Выручка", desc: `Выручка за день (${day.transactions} чеков, ср.чек ${Math.round(day.revenue/day.transactions)} ₾)`,
+        category: "Выручка", desc: `Выручка за день (${day.transactions} чеков, ср.чек ${avg} ₾)`,
         amount: day.revenue,
       });
     });
@@ -1655,7 +1673,7 @@ const NAME_TO_KEY = (() => {
   return map;
 })();
 
-// Full data fetch from a public sheet via API Key. Returns { appData, stats }.
+// Full data fetch from a public sheet via API Key. Returns { appData, ddsRecords, stats }.
 async function fetchSheetsData(sheetId) {
   const rows = await gsRead(sheetId, "Monthly!A1:AN60");
   const parsed = parseMonthlySheet(rows);
@@ -1679,6 +1697,7 @@ async function fetchSheetsData(sheetId) {
   const appData = transformSheetsToData(parsed, dailyRows);
   return {
     appData,
+    ddsRecords,
     stats: { months: appData.length, daily: dailyRows.length, dds: ddsRecords.length }
   };
 }
@@ -1895,14 +1914,16 @@ function App() {
   const [editPassword, setEditPassword] = useState(null); // null = view-only; string = edit mode
   const [loginOpen, setLoginOpen] = useState(false);
   const isEditor = !!editPassword;
+  const [ddsRecords, setDDSRecords] = useState([]); // real DDS records from Sheets
 
   const loadFromSheets = async () => {
     setSyncLoading(true);
     setSyncError(null);
     try {
-      const { appData, stats } = await fetchSheetsData(DEFAULT_SHEET_ID);
+      const { appData, ddsRecords: realDDS, stats } = await fetchSheetsData(DEFAULT_SHEET_ID);
       if (Array.isArray(appData) && appData.length > 0) {
         setData(appData);
+        setDDSRecords(realDDS || []);
         setDataSource("sheets");
         setSyncStats(stats);
         setLastSyncedAt(Date.now());
@@ -1983,7 +2004,7 @@ function App() {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {tab==="dashboard" && <DashboardTab data={data} />}
         {tab==="pnl" && <PnLTab data={data} />}
-        {tab==="dds" && <DDSTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} />}
+        {tab==="dds" && <DDSTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} useRealDDS={dataSource === "sheets"} />}
         {tab==="dow" && <DayOfWeekTab data={data} />}
         {tab==="forecast" && <ForecastTab data={data} />}
         {tab==="fixcost" && <FixedCostsTab data={data} />}
