@@ -512,7 +512,7 @@ function PnLTab({ data }) {
   const [view, setView] = useState("months");
   const [selMonth, setSelMonth] = useState(11);
 
-  const monthCols = useMemo(() => data.map((d,i) => ({label: MONTHS[i], pnl: computePnL(d)})), [data]);
+  const monthCols = useMemo(() => data.map((d) => ({label: `${MONTHS[d.month]} '${String(d.year).slice(-2)}`, pnl: computePnL(d)})), [data]);
 
   const weekCols = useMemo(() => {
     const md = data[selMonth]; if (!md) return [];
@@ -540,7 +540,7 @@ function PnLTab({ data }) {
         {[["months","Месяцы"],["weeks","Недели"],["days","Дни"]].map(([id,lb]) => (
           <button key={id} onClick={()=>setView(id)} className={`px-4 py-2 rounded-lg text-sm font-medium ${view===id?'bg-indigo-600 text-white':'bg-white border text-gray-600 hover:bg-gray-50'}`}>{lb}</button>
         ))}
-        {view !== "months" && <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="ml-auto border rounded px-3 py-2 text-sm">{MONTHS.map((m,i) => <option key={i} value={i}>{m} 2025</option>)}</select>}
+        {view !== "months" && <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="ml-auto border rounded px-3 py-2 text-sm">{data.map((md,i) => <option key={i} value={i}>{MONTHS[md.month]} {md.year}</option>)}</select>}
       </div>
       <div className="bg-white rounded-xl border p-4"><PnLTable columns={cols} /></div>
     </div>
