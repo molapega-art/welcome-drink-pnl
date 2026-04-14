@@ -1568,7 +1568,80 @@ function parseDailySheet(rows) {
   });
 }
 
-function GoogleSheetsTab({ onDataLoaded }) {
+// Transform monthly sheet data into the app's data shape:
+// an array of month objects with days[], revenueTotal, foodcost, etc.
+function transformSheetsToData(parsed, dailyRows) {
+  const result = [];
+  const sortedMonths = Object.keys(parsed).sort();
+  // Optional daily data indexed by date
+  const dailyIdx = {};
+  if (Array.isArray(dailyRows)) {
+    for (const d of dailyRows) {
+      if (d.date) dailyIdx[d.date] = d;
+    }
+  }
+  for (const monthLabel of sortedMonths) {
+    const [year, mm] = monthLabel.split('-').map(Number);
+    const monthIdx = mm - 1;
+    const md = parsed[monthLabel];
+    const daysN = new Date(year, monthIdx + 1, 0).getDate();
+    const revenueTotal = Number(md.revenueTotal) || 0;
+    const foodcost = Number(md.foodcost) || 0;
+    const kitchenRevenue = Number(md.kitchenRevenue) || 0;
+    const kitchenFoodcost = Number(md.kitchenFoodcost) || 0;
+    // Build per-day distribution using day-of-week weighting when we don't have real daily data
+    const weights = [];
+    let totalWeight = 0;
+    for (let d = 1; d <= daysN; d++) {
+      const dow = new Date(year, monthIdx, d).getDay();
+      const mult = (dow === 5 || dow === 6) ? 1.6 : dow === 0 ? 1.2 : 0.85;
+      weights.push(mult);
+      totalWeight += mult;
+    }
+    const days = [];
+    for (let d = 1; d <= daysN; d++) {
+      const dt = new Date(year, monthIdx, d);
+      const dow = dt.getDay();
+      const dowIdx = dow === 0 ? 6 : dow - 1;
+      const dateStr = `${year}-${String(mm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const realDay = dailyIdx[dateStr];
+      if (realDay) {
+        days.push({
+          date: dateStr,
+          dow: dowIdx,
+          revenue: Number(realDay.revenueTotal) || 0,
+          kitchenRevenue: Number(realDay.kitchenRevenue) || 0,
+          foodcost: Number(realDay.foodcost) || 0,
+          kitchenFoodcost: Number(realDay.kitchenFoodcost) || 0,
+          transactions: Number(realDay.transactions) || 0,
+        });
+      } else {
+        const share = totalWeight > 0 ? (weights[d - 1] / totalWeight) : (1 / daysN);
+        days.push({
+          date: dateStr,
+          dow: dowIdx,
+          revenue: Math.round(revenueTotal * share),
+          kitchenRevenue: Math.round(kitchenRevenue * share),
+          foodcost: Math.round(foodcost * share),
+          kitchenFoodcost: Math.round(kitchenFoodcost * share),
+          transactions: 0,
+        });
+      }
+    }
+    const totalTransactions = days.reduce((s, d) => s + (d.transactions || 0), 0);
+    result.push({
+      ...md,
+      month: monthIdx,
+      year,
+      days,
+      totalTransactions,
+      revenueTotal, foodcost, kitchenRevenue, kitchenFoodcost,
+    });
+  }
+  return result;
+}
+
+function GoogleSheetsTab({ onDataLoaded, onResetToDemo, dataSource }) {
   const [sheetId, setSheetId] = useState(localStorage.getItem("wd_sheet_id") || "");
   const [status, setStatus] = useState("disconnected");
   const [log, setLog] = useState([]);
@@ -1614,7 +1687,18 @@ function GoogleSheetsTab({ onDataLoaded }) {
       const parsed = parseMonthlySheet(rows);
       const monthCount = Object.keys(parsed).length;
       addLog(`Загружено ${monthCount} месяцев`, "success");
-      if (onDataLoaded) onDataLoaded(parsed);
+      // Also try loading Daily (optional — synthetic days if missing)
+      let dailyRows = [];
+      try {
+        const dRows = await gsRead(sheetId, "Daily!A1:H1000");
+        dailyRows = parseDailySheet(dRows);
+        if (dailyRows.length > 0) addLog(`Загружено ${dailyRows.length} дневных записей`, "success");
+      } catch (err) {
+        addLog("Daily не загружен — используется синтетика", "info");
+      }
+      const appData = transformSheetsToData(parsed, dailyRows);
+      addLog(`Данные подключены к дашборду (${appData.length} месяцев)`, "success");
+      if (onDataLoaded) onDataLoaded(appData);
     } catch (e) {
       addLog(`Ошибка чтения: ${e.message}`, "error");
     } finally {
@@ -1706,6 +1790,14 @@ function GoogleSheetsTab({ onDataLoaded }) {
               ✏️ Тестовая запись
             </button>
           </div>
+          {dataSource === "sheets" && onResetToDemo && (
+            <div className="pt-3 border-t">
+              <button onClick={() => { onResetToDemo(); addLog("Сброс к демо-данным", "info"); }}
+                className="text-sm text-gray-500 hover:text-gray-700 underline">
+                ↺ Вернуться к демо-данным
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1744,6 +1836,7 @@ function App() {
   const [data, setData] = useState(genDemo);
   const [blocks, setBlocks] = useState(DEFAULT_BLOCKS);
   const [gsConnected, setGsConnected] = useState(false);
+  const [dataSource, setDataSource] = useState("demo"); // "demo" | "sheets"
 
   const tabs = [
     {id:"dashboard",label:"Дашборд",icon:"◉"},
@@ -1766,7 +1859,14 @@ function App() {
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">W</div>
             <div><h1 className="font-bold text-gray-900 text-lg">Welcome Drink</h1><p className="text-xs text-gray-400">P&L Dashboard — Тбилиси</p></div>
           </div>
-          <div className="text-sm text-gray-500">2025 • GEL (₾)</div>
+          <div className="flex items-center gap-3">
+            {dataSource === "sheets" ? (
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">⊞ Google Sheets</span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Демо-данные</span>
+            )}
+            <div className="text-sm text-gray-500">GEL (₾)</div>
+          </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-all ${tab===t.id?'border-indigo-600 text-indigo-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>{t.icon} {t.label}</button>)}
@@ -1780,11 +1880,17 @@ function App() {
         {tab==="forecast" && <ForecastTab data={data} />}
         {tab==="fixcost" && <FixedCostsTab data={data} />}
         {tab==="sync" && <SyncTab />}
-        {tab==="gsheets" && <GoogleSheetsTab onDataLoaded={(newData) => { setGsConnected(true); }} />}
+        {tab==="gsheets" && <GoogleSheetsTab onDataLoaded={(newData) => {
+          if (Array.isArray(newData) && newData.length > 0) {
+            setData(newData);
+            setDataSource("sheets");
+          }
+          setGsConnected(true);
+        }} onResetToDemo={() => { setData(genDemo()); setDataSource("demo"); }} dataSource={dataSource} />}
         {tab==="expenses" && <ExpensesTab />}
         {tab==="settings" && <SettingsTab blocks={blocks} onUpdateBlocks={setBlocks} />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v3.3 — {gsConnected ? "Google Sheets подключен" : "демо"}</span><span>Poster POS API • Google Sheets</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v3.3 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}</span><span>Poster POS API • Google Sheets</span></div></div>
     </div>
   );
 }
