@@ -961,8 +961,7 @@ function ExpensesTab() {
 // ════════════════════════════════════════════════
 // ДДС — Движение Денежных Средств
 // ════════════════════════════════════════════════
-function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealDDS = false }) {
-  const [filterMonth, setFilterMonth] = useState(11);
+function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealDDS = false, filterMonth, setFilterMonth }) {
   const [filterType, setFilterType] = useState("all"); // all, income, expense
   const [filterCat, setFilterCat] = useState("all");
   const [search, setSearch] = useState("");
@@ -970,6 +969,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [edits, setEdits] = useState({}); // {monthIdx: {id: {category, desc, amount}}}
+  const [deletingId, setDeletingId] = useState(null);
 
   // Quick-add form (only for editors)
   const [qaOpen, setQaOpen] = useState(false);
@@ -1045,12 +1045,14 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
 
   // Generate all transactions from monthly data
   const allTransactions = useMemo(() => {
-    // If using real DDS records from Sheets — return those directly, filtered to current month
+    // If using real DDS records from Sheets — return those directly, filtered to current month.
+    // Skip records marked hidden=yes in the sheet (they're archived, not shown).
     if (useRealDDS) {
-      const year = data[filterMonth]?.year || 2025;
-      const prefix = `${year}-${String(filterMonth + 1).padStart(2, '0')}`;
+      const md = data[filterMonth];
+      if (!md) return [];
+      const prefix = `${md.year}-${String(md.month + 1).padStart(2, '0')}`;
       return realDDS
-        .filter(r => r.date && r.date.startsWith(prefix))
+        .filter(r => r.date && r.date.startsWith(prefix) && !r.hidden)
         .map(r => ({
           id: r.id,
           date: r.date,
@@ -1059,7 +1061,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
           category: r.subcategory || r.category || "—",
           desc: r.description || r.category || "",
           amount: Number(r.amount) || 0,
-          hidden: !!r.hidden,
+          hidden: false,
         }));
     }
     const md = data[filterMonth];
@@ -1160,8 +1162,8 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
     });
   }, [allTransactions, filterType, filterCat, search, edits, filterMonth]);
 
-  // Totals (hidden rows excluded from calculations)
-  const visible = filtered.filter(t => !isHidden(t.id));
+  // Totals (hidden rows excluded from calculations — respects both local and sheet-side hidden)
+  const visible = filtered.filter(t => !isHidden(t.id) && !t.hidden);
   const hiddenCount = filtered.length - visible.length;
   const totalIncome = visible.filter(t => t.type === "income").reduce((s,t) => s+t.amount, 0);
   const totalExpense = visible.filter(t => t.type === "expense").reduce((s,t) => s+t.amount, 0);
@@ -1182,6 +1184,24 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
   // Source badge color
   const srcColor = (s) => s === "Poster" ? "bg-blue-100 text-blue-700" : s === "Google Sheets" ? "bg-green-100 text-green-700" : s === "Инвентаризация" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600";
 
+  const currentMd = data[filterMonth];
+  const periodLabel = currentMd ? `${MONTHS[currentMd.month]} ${currentMd.year}` : "—";
+  const shortPeriodLabel = currentMd ? `${MONTHS[currentMd.month]} ${String(currentMd.year).slice(-2)}` : "—";
+
+  const handleDelete = async (id) => {
+    if (!isEditor) return;
+    if (!window.confirm("Удалить запись из таблицы? Это действие необратимо.")) return;
+    setDeletingId(id);
+    try {
+      await gsWriteAction("deleteDDS", editPassword, { id });
+      if (onReload) setTimeout(onReload, 300);
+    } catch (e) {
+      alert("Ошибка удаления: " + e.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Summary cards */}
@@ -1199,7 +1219,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
         <div className={`rounded-xl border p-4 ${balance >= 0 ? 'bg-indigo-50 border-indigo-200' : 'bg-red-50 border-red-200'}`}>
           <div className="text-xs text-gray-500 uppercase">Баланс</div>
           <div className={`text-xl font-bold mt-1 ${balance >= 0 ? 'text-indigo-700' : 'text-red-700'}`}>{fmtG(balance)}</div>
-          <div className="text-xs text-gray-500">{MONTHS[filterMonth]} 2025</div>
+          <div className="text-xs text-gray-500">{periodLabel}</div>
         </div>
       </div>
 
@@ -1260,7 +1280,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
       <div className="bg-white rounded-xl border p-4">
         <div className="flex gap-2 flex-wrap items-center">
           <select value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))} className="border rounded px-3 py-2 text-sm">
-            {MONTHS.map((m,i) => <option key={i} value={i}>{m} 2025</option>)}
+            {data.map((md, i) => <option key={i} value={i}>{MONTHS[md.month]} {md.year}</option>)}
           </select>
           <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="border rounded px-3 py-2 text-sm">
             <option value="all">Все операции</option>
@@ -1292,7 +1312,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
 
       {/* Transactions table */}
       <div className="bg-white rounded-xl border p-4">
-        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Все транзакции — {MONTHS[filterMonth]} 2025</h3>
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Все транзакции — {periodLabel}</h3>
         <div className="overflow-x-auto max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white">
@@ -1348,6 +1368,12 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
                         <button onClick={() => toggleHide(t.id)} className={`px-1.5 py-0.5 rounded text-xs ${hidden ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`} title={hidden ? "Показать" : "Скрыть"}>
                           {hidden ? '◉' : '◎'}
                         </button>
+                        {isEditor && useRealDDS && (
+                          <button onClick={() => handleDelete(t.id)} disabled={deletingId === t.id}
+                            className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100 disabled:opacity-50" title="Удалить из таблицы">
+                            {deletingId === t.id ? '…' : '🗑'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>
@@ -1356,7 +1382,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-gray-800 font-bold">
-                <td colSpan={5} className="py-2 text-gray-700">Итого ({MONTHS[filterMonth]})</td>
+                <td colSpan={5} className="py-2 text-gray-700">Итого ({periodLabel})</td>
                 <td className={`py-2 text-right tabular-nums ${balance >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                   {balance >= 0 ? '+' : '−'}{fmt(Math.abs(balance))} ₾
                 </td>
@@ -1915,6 +1941,8 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const isEditor = !!editPassword;
   const [ddsRecords, setDDSRecords] = useState([]); // real DDS records from Sheets
+  // DDS filter state lifted to App so it persists across tab switches
+  const [ddsFilterMonth, setDDSFilterMonth] = useState(null); // null → auto-pick latest month with data
 
   const loadFromSheets = async () => {
     setSyncLoading(true);
@@ -2004,7 +2032,14 @@ function App() {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {tab==="dashboard" && <DashboardTab data={data} />}
         {tab==="pnl" && <PnLTab data={data} />}
-        {tab==="dds" && <DDSTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} useRealDDS={dataSource === "sheets"} />}
+        {tab==="dds" && <DDSTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} useRealDDS={dataSource === "sheets"}
+          filterMonth={ddsFilterMonth != null ? ddsFilterMonth : Math.min(data.length - 1, (() => {
+            const now = new Date();
+            const target = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+            const idx = data.findIndex(m => `${m.year}-${String(m.month+1).padStart(2,'0')}` === target);
+            return idx >= 0 ? idx : data.length - 1;
+          })())}
+          setFilterMonth={setDDSFilterMonth} />}
         {tab==="dow" && <DayOfWeekTab data={data} />}
         {tab==="forecast" && <ForecastTab data={data} />}
         {tab==="fixcost" && <FixedCostsTab data={data} />}
