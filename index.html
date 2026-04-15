@@ -1890,10 +1890,12 @@ function LoginModal({ onLogin, onClose, error }) {
     setSubmitting(true);
     setLocalError(null);
     try {
-      // Verify password by sending a harmless ping action that still gets password-checked
-      // We use an unknown action — server first checks password, then returns "Unknown action" if pw correct.
+      // Verify password: send an unknown action. Server first validates password, then returns
+      // "Неизвестное действие: ping" if pw correct, or "Неверный пароль" if not.
       await gsWriteAction("ping", password).catch(e => {
-        if (String(e.message).includes("Unknown action")) return { ok: true }; // password was correct
+        const msg = String(e.message);
+        // Correct password: server got past password check and rejected unknown action
+        if (msg.includes("Неизвестное действие") || msg.includes("Unknown action")) return { ok: true };
         throw e;
       });
       onLogin(password);
