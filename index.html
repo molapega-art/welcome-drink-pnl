@@ -223,19 +223,21 @@ const aggMonths = (arr) => {
 
 const aggDays = (days, monthData) => {
   if (!days.length) return null;
-  const totRev = days.reduce((s,d) => s+d.revenue, 0);
-  const ratio = monthData.revenueTotal > 0 ? totRev / monthData.revenueTotal : 0;
-  const result = { revenueTotal: totRev };
+  // Revenue, foodcost — sum of real daily values (from Daily sheet / Poster).
+  const result = {};
+  result.revenueTotal = days.reduce((s,d) => s+d.revenue, 0);
   result.foodcost = days.reduce((s,d) => s+d.foodcost, 0);
   result.kitchenRevenue = days.reduce((s,d) => s+n(d.kitchenRevenue), 0);
   result.kitchenFoodcost = days.reduce((s,d) => s+n(d.kitchenFoodcost), 0);
   result.totalTransactions = days.reduce((s,d) => s+d.transactions, 0);
-  // Prorate monthly costs
-  const prorate = (key) => Math.round(n(monthData[key]) * ratio);
-  [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.writeoffs,...STRUCTURE.tax].forEach(({key}) => {
+  // Monthly costs (rent, salaries, etc.) — prorate by DAY COUNT not revenue.
+  // A week with 7 of 30 days gets 7/30 of monthly rent.
+  const monthDaysN = monthData.days ? monthData.days.length : 30;
+  const dayRatio = monthDaysN > 0 ? days.length / monthDaysN : 0;
+  const prorate = (key) => Math.round(n(monthData[key]) * dayRatio);
+  [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.household,...STRUCTURE.writeoffs,...STRUCTURE.tax].forEach(({key}) => {
     result[key] = prorate(key);
   });
-  // salaryKitchen уже прорачен через STRUCTURE.salaries, отдельно не нужно
   return result;
 };
 
@@ -814,7 +816,9 @@ function SyncTab() {
 // ════════════════════════════════════════════════
 // ПОСТОЯННЫЕ РАСХОДЫ — ввод и управление
 // ════════════════════════════════════════════════
-function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }) {
+const FC_TAG = "[Fixed cost]";
+
+function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload, realDDS = [] }) {
   // Default to current month if available, else last month
   const defaultIdx = (() => {
     const now = new Date();
@@ -841,15 +845,42 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }
   const getVal = (key) => localValues[`${selMonth}:${key}`] != null ? localValues[`${selMonth}:${key}`] : n(md[key]);
   const setVal = (key, val) => setLocalValues(prev => ({...prev, [`${selMonth}:${key}`]: Number(val)}));
 
-  // Save a single value to the sheet via setMonthly API
-  const saveToSheet = async (key) => {
-    if (!isEditor) return; // demo/view mode: local only
+  // Save a value by upserting a DDS record tagged as [Fixed cost].
+  // One record per (accrualMonth + subcategory + [FC] tag) — updated on edit, not duplicated.
+  const saveToSheet = async (key, itemName) => {
+    if (!isEditor) return;
     const val = getVal(key);
-    const currentSheetVal = n(md[key]);
-    if (val === currentSheetVal) return; // no change
     setSaving(key);
     try {
-      await setMonthlyValue(editPassword, monthLabel, key, val);
+      // Find existing [FC] DDS record for this (month, item)
+      const existing = realDDS.find(r =>
+        r.accrualMonth === monthLabel &&
+        r.subcategory === itemName &&
+        (r.description || "").startsWith(FC_TAG) &&
+        !r.hidden
+      );
+      if (existing) {
+        if (val === 0) {
+          // Zero out → hide the record (keeps history)
+          await updateDDSEntry(editPassword, existing.id, { hidden: "yes" });
+        } else if (Number(existing.amount) !== val) {
+          await updateDDSEntry(editPassword, existing.id, { amount: val });
+        } else {
+          // No change
+        }
+      } else if (val > 0) {
+        // Create new FC record on 1st of month with accrualMonth = this month
+        const paymentDate = `${md.year}-${String(md.month+1).padStart(2,'0')}-01`;
+        await addDDSEntry(editPassword, {
+          date: paymentDate,
+          type: "expense",
+          category: "Постоянные расходы",
+          subcategory: itemName,
+          description: `${FC_TAG} ${itemName} — ${MONTHS[md.month]} ${md.year}`,
+          amount: val,
+          accrualMonth: monthLabel,
+        });
+      }
       if (onReload) setTimeout(onReload, 300);
     } catch (e) {
       alert("Ошибка сохранения: " + e.message);
@@ -858,9 +889,9 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }
     }
   };
 
-  const finishEdit = async (key) => {
+  const finishEdit = async (key, itemName) => {
     setEditing(null);
-    await saveToSheet(key);
+    await saveToSheet(key, itemName);
   };
 
   const isConfirmed = (key) => confirmed[`${selMonth}:${key}`] === true;
@@ -882,10 +913,9 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }
   return (
     <div className="space-y-4">
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-        Здесь вводятся только фиксированные расходы — суммы, которые одинаковые каждый месяц (аренда, Poster и т.д.).
-        Введите сумму за месяц → она автоматически разнесётся на недели и дни пропорционально выручке.
-        Подтверждение (✓) = сумма зафиксирована и применена к текущему и всем будущим месяцам.
-        Остальные расходы (маркетинг, зарплаты, списания и т.д.) вводятся во вкладке «Расходы» — они меняются каждый месяц.
+        Редактирование здесь создаёт запись в листе DDS с пометкой «{FC_TAG}» и месяцем начисления = выбранный месяц.
+        При повторном редактировании тот же DDS-record обновляется (не дублируется). Ноль = запись скрывается.
+        Переменные расходы (маркетинг, зарплаты, списания) лучше вводить в ДДС или «Расходы» по факту оплаты.
       </div>
 
       <div className="bg-white rounded-xl border p-4 flex items-center gap-4 flex-wrap">
@@ -933,7 +963,7 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }
                     <td className="py-2 pr-4 font-medium text-gray-700">{item.name}</td>
                     <td className="py-2 pr-4 text-right">
                       {isEdit ? (
-                        <input type="number" value={val} onChange={e=>setVal(item.key, e.target.value)} onBlur={()=>finishEdit(item.key)} onKeyDown={e=>e.key==='Enter'&&finishEdit(item.key)} autoFocus className="border rounded px-2 py-1 w-28 text-right text-sm" />
+                        <input type="number" value={val} onChange={e=>setVal(item.key, e.target.value)} onBlur={()=>finishEdit(item.key, item.name)} onKeyDown={e=>e.key==='Enter'&&finishEdit(item.key, item.name)} autoFocus className="border rounded px-2 py-1 w-28 text-right text-sm" />
                       ) : (
                         <span className={`${isEditor ? 'cursor-pointer hover:underline' : 'cursor-default'} ${val === 0 ? 'text-gray-300' : 'text-gray-900 font-medium'}`} onClick={()=>isEditor && setEditing(item.key)}>
                           {fmt(val)} {isSaving && <span className="text-xs text-blue-500">сохр…</span>}
@@ -943,7 +973,7 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload }
                     <td className="py-2 pr-4 text-right text-gray-400">{fmt(perDay)}</td>
                     <td className="py-2 pr-4 text-right">
                       {isEditor && (
-                        <button onClick={()=> isEdit ? finishEdit(item.key) : setEditing(item.key)} className="text-indigo-500 hover:text-indigo-700 text-xs">
+                        <button onClick={()=> isEdit ? finishEdit(item.key, item.name) : setEditing(item.key)} className="text-indigo-500 hover:text-indigo-700 text-xs">
                           {isEdit ? '✓' : '✎'}
                         </button>
                       )}
@@ -1100,6 +1130,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
   // Quick-add form (only for editors)
   const [qaOpen, setQaOpen] = useState(false);
   const [qaDate, setQaDate] = useState(new Date().toISOString().slice(0,10));
+  const [qaAccrualMonth, setQaAccrualMonth] = useState(""); // empty = auto from date
   const [qaType, setQaType] = useState("expense");
   const [qaBlock, setQaBlock] = useState("fixCost");
   const [qaItem, setQaItem] = useState("rent");
@@ -1129,9 +1160,10 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
         subcategory: item.name,
         description: qaDesc,
         amount: Number(qaAmount),
+        accrualMonth: qaAccrualMonth || qaDate.slice(0, 7),
       });
       setQaMessage({ type: "success", text: "Добавлено ✓" });
-      setQaAmount(""); setQaDesc("");
+      setQaAmount(""); setQaDesc(""); setQaAccrualMonth("");
       if (onReload) setTimeout(onReload, 500);
     } catch (e) {
       setQaMessage({ type: "error", text: e.message });
@@ -1389,25 +1421,48 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
           </div>
           {qaOpen && (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <input type="date" value={qaDate} onChange={e => setQaDate(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm" />
-                <select value={qaType} onChange={e => setQaType(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm">
-                  <option value="expense">Расход</option>
-                  <option value="income">Доход</option>
-                </select>
-                <select value={qaBlock} onChange={e => { setQaBlock(e.target.value); const first = STRUCTURE[e.target.value]?.[0]; if (first) setQaItem(first.key); }}
-                  className="border rounded px-2 py-1.5 text-sm">
-                  {blockOptions.map(([k]) => {
-                    const name = { fixCost:"Постоянные расходы", marketing:"Маркетинг", salaries:"Зарплаты", management:"Управленческие", household:"Хозяйственные", writeoffs:"Списания", tax:"Налоги", cogs:"Себестоимость" }[k] || k;
-                    return <option key={k} value={k}>{name}</option>;
-                  })}
-                </select>
-                <select value={qaItem} onChange={e => setQaItem(e.target.value)}
-                  className="border rounded px-2 py-1.5 text-sm">
-                  {itemOptions.map(it => <option key={it.key} value={it.key}>{it.name}</option>)}
-                </select>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">Дата оплаты</label>
+                  <input type="date" value={qaDate} onChange={e => setQaDate(e.target.value)}
+                    className="border rounded px-2 py-1.5 text-sm w-full" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">Месяц начисления</label>
+                  <select value={qaAccrualMonth} onChange={e => setQaAccrualMonth(e.target.value)}
+                    className="border rounded px-2 py-1.5 text-sm w-full">
+                    <option value="">Авто (из даты)</option>
+                    {data.map(m => {
+                      const lbl = `${m.year}-${String(m.month+1).padStart(2,'0')}`;
+                      return <option key={lbl} value={lbl}>{MONTHS[m.month]} {m.year}</option>;
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">Тип</label>
+                  <select value={qaType} onChange={e => setQaType(e.target.value)}
+                    className="border rounded px-2 py-1.5 text-sm w-full">
+                    <option value="expense">Расход</option>
+                    <option value="income">Доход</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">Блок</label>
+                  <select value={qaBlock} onChange={e => { setQaBlock(e.target.value); const first = STRUCTURE[e.target.value]?.[0]; if (first) setQaItem(first.key); }}
+                    className="border rounded px-2 py-1.5 text-sm w-full">
+                    {blockOptions.map(([k]) => {
+                      const name = { fixCost:"Постоянные расходы", marketing:"Маркетинг", salaries:"Зарплаты", management:"Управленческие", household:"Хозяйственные", writeoffs:"Списания", tax:"Налоги", cogs:"Себестоимость" }[k] || k;
+                      return <option key={k} value={k}>{name}</option>;
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">Статья</label>
+                  <select value={qaItem} onChange={e => setQaItem(e.target.value)}
+                    className="border rounded px-2 py-1.5 text-sm w-full">
+                    {itemOptions.map(it => <option key={it.key} value={it.key}>{it.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                 <input type="number" placeholder="Сумма" value={qaAmount} onChange={e => setQaAmount(e.target.value)}
@@ -1829,6 +1884,9 @@ function parseDDSSheet(rows) {
     const dateVal = String(row[1]).trim();
     if (!/^\d{4}-\d{2}-\d{2}/.test(dateVal)) continue;
     const hiddenRaw = (row[7] || "").toString().toLowerCase();
+    const accrualMonthRaw = (row[8] || "").toString().trim();
+    // Fallback: if accrualMonth blank, use YYYY-MM from date
+    const accrualMonth = accrualMonthRaw || dateVal.slice(0, 7);
     result.push({
       id: row[0],
       date: dateVal,
@@ -1838,6 +1896,7 @@ function parseDDSSheet(rows) {
       description: row[5] || "",
       amount: Number(row[6]) || 0,
       hidden: hiddenRaw === "yes" || hiddenRaw === "да" || hiddenRaw === "true",
+      accrualMonth,
     });
   }
   return result;
@@ -1853,26 +1912,20 @@ const NAME_TO_KEY = (() => {
 })();
 
 // Full data fetch from a public sheet via API Key. Returns { appData, ddsRecords, stats }.
+// Monthly sheet is now a formula-based aggregate — no in-app DDS aggregation.
 async function fetchSheetsData(sheetId) {
   const rows = await gsRead(sheetId, "Monthly!A1:AN60");
   const parsed = parseMonthlySheet(rows);
   let dailyRows = [];
   try {
-    const dRows = await gsRead(sheetId, "Daily!A1:H1000");
+    const dRows = await gsRead(sheetId, "Daily!A1:I10000");
     dailyRows = parseDailySheet(dRows);
   } catch (_) {}
   let ddsRecords = [];
   try {
-    const ddsRows = await gsRead(sheetId, "DDS!A1:H5000");
+    const ddsRows = await gsRead(sheetId, "DDS!A1:I5000");
     ddsRecords = parseDDSSheet(ddsRows);
   } catch (_) {}
-  const ddsAgg = aggregateDDSByMonth(ddsRecords);
-  for (const m in ddsAgg) {
-    parsed[m] = parsed[m] || {};
-    for (const k in ddsAgg[m]) {
-      parsed[m][k] = (Number(parsed[m][k]) || 0) + ddsAgg[m][k];
-    }
-  }
   const appData = transformSheetsToData(parsed, dailyRows);
   return {
     appData,
@@ -1896,12 +1949,12 @@ function aggregateDDSByMonth(ddsRecords) {
   return agg;
 }
 
-// Transform monthly sheet data into the app's data shape:
-// an array of month objects with days[], revenueTotal, foodcost, etc.
+// Transform monthly sheet data into the app's data shape: array of month objects with days[].
+// Days come STRICTLY from the Daily sheet — no synthetic distribution.
+// If a date has no Daily entry, its day object has revenue=0/foodcost=0.
 function transformSheetsToData(parsed, dailyRows) {
   const result = [];
   const sortedMonths = Object.keys(parsed).sort();
-  // Optional daily data indexed by date
   const dailyIdx = {};
   if (Array.isArray(dailyRows)) {
     for (const d of dailyRows) {
@@ -1913,19 +1966,6 @@ function transformSheetsToData(parsed, dailyRows) {
     const monthIdx = mm - 1;
     const md = parsed[monthLabel];
     const daysN = new Date(year, monthIdx + 1, 0).getDate();
-    const revenueTotal = Number(md.revenueTotal) || 0;
-    const foodcost = Number(md.foodcost) || 0;
-    const kitchenRevenue = Number(md.kitchenRevenue) || 0;
-    const kitchenFoodcost = Number(md.kitchenFoodcost) || 0;
-    // Build per-day distribution using day-of-week weighting when we don't have real daily data
-    const weights = [];
-    let totalWeight = 0;
-    for (let d = 1; d <= daysN; d++) {
-      const dow = new Date(year, monthIdx, d).getDay();
-      const mult = (dow === 5 || dow === 6) ? 1.6 : dow === 0 ? 1.2 : 0.85;
-      weights.push(mult);
-      totalWeight += mult;
-    }
     const days = [];
     for (let d = 1; d <= daysN; d++) {
       const dt = new Date(year, monthIdx, d);
@@ -1933,28 +1973,15 @@ function transformSheetsToData(parsed, dailyRows) {
       const dowIdx = dow === 0 ? 6 : dow - 1;
       const dateStr = `${year}-${String(mm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const realDay = dailyIdx[dateStr];
-      if (realDay) {
-        days.push({
-          date: dateStr,
-          dow: dowIdx,
-          revenue: Number(realDay.revenueTotal) || 0,
-          kitchenRevenue: Number(realDay.kitchenRevenue) || 0,
-          foodcost: Number(realDay.foodcost) || 0,
-          kitchenFoodcost: Number(realDay.kitchenFoodcost) || 0,
-          transactions: Number(realDay.transactions) || 0,
-        });
-      } else {
-        const share = totalWeight > 0 ? (weights[d - 1] / totalWeight) : (1 / daysN);
-        days.push({
-          date: dateStr,
-          dow: dowIdx,
-          revenue: Math.round(revenueTotal * share),
-          kitchenRevenue: Math.round(kitchenRevenue * share),
-          foodcost: Math.round(foodcost * share),
-          kitchenFoodcost: Math.round(kitchenFoodcost * share),
-          transactions: 0,
-        });
-      }
+      days.push({
+        date: dateStr,
+        dow: dowIdx,
+        revenue: realDay ? (Number(realDay.revenueTotal) || 0) : 0,
+        kitchenRevenue: realDay ? (Number(realDay.kitchenRevenue) || 0) : 0,
+        foodcost: realDay ? (Number(realDay.foodcost) || 0) : 0,
+        kitchenFoodcost: realDay ? (Number(realDay.kitchenFoodcost) || 0) : 0,
+        transactions: realDay ? (Number(realDay.transactions) || 0) : 0,
+      });
     }
     const totalTransactions = days.reduce((s, d) => s + (d.transactions || 0), 0);
     result.push({
@@ -1963,7 +1990,10 @@ function transformSheetsToData(parsed, dailyRows) {
       year,
       days,
       totalTransactions,
-      revenueTotal, foodcost, kitchenRevenue, kitchenFoodcost,
+      revenueTotal: Number(md.revenueTotal) || 0,
+      foodcost: Number(md.foodcost) || 0,
+      kitchenRevenue: Number(md.kitchenRevenue) || 0,
+      kitchenFoodcost: Number(md.kitchenFoodcost) || 0,
     });
   }
   return result;
@@ -2197,7 +2227,7 @@ function App() {
           setFilterMonth={setDDSFilterMonth} />}
         {tab==="dow" && <DayOfWeekTab data={data} />}
         {tab==="forecast" && <ForecastTab data={data} />}
-        {tab==="fixcost" && <FixedCostsTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} />}
+        {tab==="fixcost" && <FixedCostsTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} />}
         {tab==="sync" && <SyncTab />}
         {tab==="gsheets" && <GoogleSheetsTab
           sheetId={DEFAULT_SHEET_ID}
