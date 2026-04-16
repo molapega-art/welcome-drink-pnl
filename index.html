@@ -28,9 +28,9 @@ const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveC
 const MONTHS = ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"];
 const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#ec4899","#14b8a6","#f97316","#06b6d4","#84cc16","#a855f7","#64748b"];
-const n = (v) => v != null ? Number(v) : 0;
-const fmt = (v) => v != null ? Number(v).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "—";
-const fmtG = (v) => v != null ? `${fmt(v)} ₾` : "—";
+const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+const fmt = (v) => { if (v == null) return "—"; const x = Number(v); return Number.isFinite(x) ? x.toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "—"; };
+const fmtG = (v) => { if (v == null) return "—"; const x = Number(v); return Number.isFinite(x) ? `${fmt(x)} ₾` : "—"; };
 const fmtP = (v) => v != null ? `${(v * 100).toFixed(2)}%` : "—";
 
 // ════════════════════════════════════════════════
@@ -235,7 +235,7 @@ const aggDays = (days, monthData) => {
   const monthDaysN = monthData.days ? monthData.days.length : 30;
   const dayRatio = monthDaysN > 0 ? days.length / monthDaysN : 0;
   const prorate = (key) => Math.round(n(monthData[key]) * dayRatio);
-  [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.household,...STRUCTURE.writeoffs,...STRUCTURE.tax].forEach(({key}) => {
+  [...STRUCTURE.fixCost,...STRUCTURE.marketing,...STRUCTURE.salaries,...STRUCTURE.management,...STRUCTURE.writeoffs,...STRUCTURE.tax].forEach(({key}) => {
     result[key] = prorate(key);
   });
   return result;
@@ -348,14 +348,28 @@ function PnLTable({ columns }) {
 // TABS
 // ════════════════════════════════════════════════
 function DashboardTab({ data }) {
+  // Default selMonth = current month in data, else last
+  const defaultIdx = (() => {
+    const now = new Date();
+    const target = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const idx = data.findIndex(m => `${m.year}-${String(m.month+1).padStart(2,'0')}` === target);
+    return idx >= 0 ? idx : Math.max(0, data.length - 1);
+  })();
+  const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort(), [data]);
+  const defaultYear = availableYears.includes(new Date().getFullYear()) ? new Date().getFullYear() : (availableYears[availableYears.length - 1] || new Date().getFullYear());
   const [periodType, setPeriodType] = useState("year");
-  const [selMonth, setSelMonth] = useState(11);
-  const [dateFrom, setDateFrom] = useState("2025-01-01");
-  const [dateTo, setDateTo] = useState("2025-12-31");
+  const [selYear, setSelYear] = useState(defaultYear);
+  const [selMonth, setSelMonth] = useState(defaultIdx);
+  const firstMonth = data[0] ? `${data[0].year}-${String(data[0].month+1).padStart(2,'0')}-01` : `${defaultYear}-01-01`;
+  const lastMonthData = data[data.length - 1];
+  const lastDay = lastMonthData ? new Date(lastMonthData.year, lastMonthData.month + 1, 0).getDate() : 31;
+  const lastMonth = lastMonthData ? `${lastMonthData.year}-${String(lastMonthData.month+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}` : `${defaultYear}-12-31`;
+  const [dateFrom, setDateFrom] = useState(firstMonth);
+  const [dateTo, setDateTo] = useState(lastMonth);
 
   // Compute data for selected period
   const periodData = useMemo(() => {
-    if (periodType === "year") return aggMonths(data);
+    if (periodType === "year") return aggMonths(data.filter(d => d.year === selYear));
     if (periodType === "month") return data[selMonth] || null;
     if (periodType === "week") {
       const md = data[selMonth];
@@ -400,16 +414,18 @@ function DashboardTab({ data }) {
       return result;
     }
     return null;
-  }, [data, periodType, selMonth, dateFrom, dateTo]);
+  }, [data, periodType, selYear, selMonth, dateFrom, dateTo]);
 
   const yp = computePnL(periodData);
   if (!yp) return <p className="text-gray-400 text-center py-8">Нет данных за выбранный период</p>;
 
-  const periodLabel = periodType === "year" ? "2025 год" : periodType === "month" ? `${MONTHS[selMonth]} 2025` : periodType === "week" ? `Неделя (${MONTHS[selMonth]})` : periodType === "day" ? `День (${MONTHS[selMonth]})` : `${dateFrom} — ${dateTo}`;
+  const selMd = data[selMonth];
+  const monthLbl = selMd ? `${MONTHS[selMd.month]} ${selMd.year}` : "—";
+  const periodLabel = periodType === "year" ? `${selYear} год` : periodType === "month" ? monthLbl : periodType === "week" ? `Неделя (${monthLbl})` : periodType === "day" ? `День (${monthLbl})` : `${dateFrom} — ${dateTo}`;
 
-  const chart = data.map((d,i) => {
+  const chart = data.filter(d => d.year === selYear).map((d) => {
     const p = computePnL(d);
-    return { name: MONTHS[i], revenue: p.revenue, gross: p.grossProfit, net: p.netProfit, foodcost: p.foodcost };
+    return { name: MONTHS[d.month], revenue: p.revenue, gross: p.grossProfit, net: p.netProfit, foodcost: p.foodcost };
   });
 
   const expPie = [
@@ -435,9 +451,14 @@ function DashboardTab({ data }) {
         {[["year","Год"],["month","Месяц"],["week","Неделя"],["day","День"],["custom","Даты"]].map(([id,lb])=>(
           <button key={id} onClick={()=>setPeriodType(id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${periodType===id?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{lb}</button>
         ))}
+        {periodType === "year" && availableYears.length > 1 && (
+          <select value={selYear} onChange={e=>setSelYear(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
+            {availableYears.map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+        )}
         {(periodType === "month" || periodType === "week" || periodType === "day") && (
           <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
-            {MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)}
+            {data.map((md,i)=><option key={i} value={i}>{MONTHS[md.month]} {md.year}</option>)}
           </select>
         )}
         {periodType === "custom" && (
@@ -460,7 +481,7 @@ function DashboardTab({ data }) {
       </div>
 
       <div className="bg-white rounded-xl border p-6">
-        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Выручка, маржа, чистая прибыль (по месяцам)</h3>
+        <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Выручка, маржа, чистая прибыль — {selYear}</h3>
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={chart}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -550,17 +571,24 @@ function PnLTab({ data }) {
 }
 
 function DayOfWeekTab({ data }) {
+  const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort(), [data]);
+  const defaultYear = availableYears.includes(new Date().getFullYear()) ? new Date().getFullYear() : (availableYears[availableYears.length - 1] || new Date().getFullYear());
   const [periodType, setPeriodType] = useState("year");
+  const [selYear, setSelYear] = useState(defaultYear);
   const [selMonth, setSelMonth] = useState(0);
-  const [dateFrom, setDateFrom] = useState("2025-01-01");
-  const [dateTo, setDateTo] = useState("2025-12-31");
+  const firstMd = data[0];
+  const lastMd = data[data.length - 1];
+  const firstStr = firstMd ? `${firstMd.year}-${String(firstMd.month+1).padStart(2,'0')}-01` : `${defaultYear}-01-01`;
+  const lastStr = lastMd ? `${lastMd.year}-${String(lastMd.month+1).padStart(2,'0')}-${String(new Date(lastMd.year, lastMd.month+1, 0).getDate()).padStart(2,'0')}` : `${defaultYear}-12-31`;
+  const [dateFrom, setDateFrom] = useState(firstStr);
+  const [dateTo, setDateTo] = useState(lastStr);
 
   // Collect all days from selected period (no useMemo - direct calc)
   let allDays = [];
   let refMonth = data[0];
 
   if (periodType === "year") {
-    data.forEach(md => { if (md && md.days) md.days.forEach(d => allDays.push(d)); });
+    data.filter(md => md.year === selYear).forEach(md => { if (md && md.days) md.days.forEach(d => allDays.push(d)); });
   } else if (periodType === "month") {
     const md = data[selMonth];
     if (md && md.days) { allDays = md.days; refMonth = md; }
@@ -581,7 +609,9 @@ function DayOfWeekTab({ data }) {
     });
   }
 
-  const periodLabel = periodType === "year" ? "2025 год" : periodType === "month" ? `${MONTHS[selMonth]} 2025` : periodType === "quarter" ? `Q${Math.floor(selMonth/3)+1} 2025` : `${dateFrom} — ${dateTo}`;
+  const selMd2 = data[selMonth];
+  const monthLbl2 = selMd2 ? `${MONTHS[selMd2.month]} ${selMd2.year}` : "—";
+  const periodLabel = periodType === "year" ? `${selYear} год` : periodType === "month" ? monthLbl2 : periodType === "quarter" ? `Q${Math.floor(selMonth/3)+1} ${selMd2 ? selMd2.year : selYear}` : `${dateFrom} — ${dateTo}`;
 
   // Group by day of week
   const buckets = [[], [], [], [], [], [], []];
@@ -617,12 +647,22 @@ function DayOfWeekTab({ data }) {
         {[["year","Год"],["quarter","Квартал"],["month","Месяц"],["custom","Даты"]].map(([id,lb])=>(
           <button key={id} onClick={()=>setPeriodType(id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${periodType===id?'bg-indigo-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{lb}</button>
         ))}
-        {(periodType === "month" || periodType === "quarter") && (
+        {periodType === "year" && availableYears.length > 1 && (
+          <select value={selYear} onChange={e=>setSelYear(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
+            {availableYears.map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+        )}
+        {periodType === "month" && (
           <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
-            {periodType === "month"
-              ? MONTHS.map((m,i)=><option key={i} value={i}>{m} 2025</option>)
-              : [0,3,6,9].map(q=><option key={q} value={q}>Q{q/3+1} 2025</option>)
-            }
+            {data.map((md,i)=><option key={i} value={i}>{MONTHS[md.month]} {md.year}</option>)}
+          </select>
+        )}
+        {periodType === "quarter" && (
+          <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded px-3 py-1.5 text-sm ml-2">
+            {data.filter((_,i) => i % 3 === 0).map((md) => {
+              const idx = data.findIndex(d => d.year === md.year && d.month === md.month);
+              return <option key={idx} value={idx}>Q{Math.floor(md.month/3)+1} {md.year}</option>;
+            })}
           </select>
         )}
         {periodType === "custom" && (
@@ -1856,7 +1896,9 @@ function parseMonthlySheet(rows) {
       const key = rows[r][0];
       if (key && !FORMULA_KEYS.has(key)) {
         const val = rows[r][c];
-        monthData[key] = val !== undefined && val !== "" ? Number(val) : 0;
+        // Use NaN-safe conversion: cells with #VALUE!/#REF!/etc. become 0
+        const num = Number(val);
+        monthData[key] = (val !== undefined && val !== "" && Number.isFinite(num)) ? num : 0;
       }
     }
     data[monthLabel] = monthData;
@@ -2234,7 +2276,7 @@ function App() {
           syncError={syncError}
         />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.2 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.3 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
