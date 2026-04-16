@@ -248,21 +248,25 @@ function PnLTable({ columns }) {
   if (!columns.length) return null;
   const pnls = columns.map(c => c.pnl);
 
-  const Row = ({ label, values, bold, indent, topBorder, bg, colorAuto }) => (
-    <tr className={`${topBorder ? 'border-t-2 border-gray-800' : 'border-b border-gray-100'} ${bg || ''}`}>
-      <td className={`py-1.5 pr-4 ${indent ? 'pl-6 text-gray-500' : 'pl-2 text-gray-700'} text-sm whitespace-nowrap ${bold ? 'font-bold text-gray-900' : ''}`}>{label}</td>
-      {values.map((v, i) => (
-        <td key={i} className={`py-1.5 px-2 text-right text-sm tabular-nums whitespace-nowrap ${bold ? 'font-bold' : ''} ${colorAuto ? (v < 0 ? 'text-red-600 font-semibold' : 'text-gray-900') : 'text-gray-900'}`}>
-          {v != null ? fmt(v) : ''}
-        </td>
-      ))}
-    </tr>
-  );
+  const Row = ({ label, values, bold, indent, topBorder, bg, colorAuto }) => {
+    const rowBg = bg || 'bg-white';
+    const borderCls = topBorder ? 'border-t-2 border-gray-800' : 'border-b border-gray-100';
+    return (
+      <tr className={`${borderCls} ${bg || ''}`}>
+        <td className={`py-1.5 pr-4 ${indent ? 'pl-6 text-gray-500' : 'pl-2 text-gray-700'} text-sm whitespace-nowrap ${bold ? 'font-bold text-gray-900' : ''} sticky left-0 z-10 ${rowBg} shadow-[2px_0_0_0_#e5e7eb]`}>{label}</td>
+        {values.map((v, i) => (
+          <td key={i} className={`py-1.5 px-2 text-right text-sm tabular-nums whitespace-nowrap ${bold ? 'font-bold' : ''} ${colorAuto ? (v < 0 ? 'text-red-600 font-semibold' : 'text-gray-900') : 'text-gray-900'}`}>
+            {v != null ? fmt(v) : ''}
+          </td>
+        ))}
+      </tr>
+    );
+  };
 
   const Section = ({ label, values }) => (
-    <tr className="border-t border-gray-300 bg-gray-50">
-      <td className="py-2 pl-2 pr-4 text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</td>
-      {values.map((v,i) => <td key={i} className="py-2 px-2 text-right text-xs font-bold text-gray-700 tabular-nums">{v != null ? fmt(v) : ''}</td>)}
+    <tr className="border-t border-gray-300">
+      <td className="py-2 pl-2 pr-4 text-xs font-bold text-gray-500 uppercase tracking-wider sticky left-0 z-10 bg-gray-50 shadow-[2px_0_0_0_#e5e7eb]">{label}</td>
+      {values.map((v,i) => <td key={i} className="py-2 px-2 text-right text-xs font-bold text-gray-700 tabular-nums bg-gray-50">{v != null ? fmt(v) : ''}</td>)}
     </tr>
   );
 
@@ -270,12 +274,12 @@ function PnLTable({ columns }) {
   const itemVals = (key) => pnls.map(p => p?.d ? n(p.d[key]) : null);
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className="sticky top-0 z-10">
-          <tr className="border-b-2 border-gray-800 bg-white shadow-sm">
-            <th className="py-2 pl-2 pr-4 text-left text-xs font-bold text-gray-400 uppercase w-52 bg-white sticky left-0 z-20">WELCOME DRINK</th>
-            {columns.map((c,i) => <th key={i} className="py-2 px-2 text-right text-sm font-bold text-gray-700 min-w-24 bg-white">{c.label}</th>)}
+    <div className="overflow-auto max-h-[calc(100vh-220px)] border border-gray-100 rounded">
+      <table className="w-full border-separate" style={{borderSpacing: 0}}>
+        <thead>
+          <tr>
+            <th className="py-2 pl-2 pr-4 text-left text-xs font-bold text-gray-400 uppercase w-52 bg-white sticky top-0 left-0 z-30 border-b-2 border-gray-800 shadow-[2px_0_0_0_#e5e7eb]">WELCOME DRINK</th>
+            {columns.map((c,i) => <th key={i} className="py-2 px-2 text-right text-sm font-bold text-gray-700 min-w-24 bg-white sticky top-0 z-20 border-b-2 border-gray-800">{c.label}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1633,15 +1637,21 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
                       </div>
                     ) : (
                       <div className="flex gap-1 justify-center">
-                        <button onClick={() => startEdit(t)} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs hover:bg-gray-200" title="Редактировать">✎</button>
-                        <button onClick={() => toggleHide(t.id)} className={`px-1.5 py-0.5 rounded text-xs ${hidden ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`} title={hidden ? "Показать" : "Скрыть"}>
-                          {hidden ? '◉' : '◎'}
-                        </button>
-                        {isEditor && useRealDDS && (
-                          <button onClick={() => handleDelete(t.id)} disabled={deletingId === t.id}
-                            className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100 disabled:opacity-50" title="Удалить из таблицы">
-                            {deletingId === t.id ? '…' : '🗑'}
-                          </button>
+                        {isEditor ? (
+                          <>
+                            <button onClick={() => startEdit(t)} className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs hover:bg-gray-200" title="Редактировать">✎</button>
+                            <button onClick={() => toggleHide(t.id)} className={`px-1.5 py-0.5 rounded text-xs ${hidden ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`} title={hidden ? "Показать" : "Скрыть"}>
+                              {hidden ? '◉' : '◎'}
+                            </button>
+                            {useRealDDS && (
+                              <button onClick={() => handleDelete(t.id)} disabled={deletingId === t.id}
+                                className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100 disabled:opacity-50" title="Удалить из таблицы">
+                                {deletingId === t.id ? '…' : '🗑'}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-300" title="Войди как редактор для изменений">🔒</span>
                         )}
                       </div>
                     )}
@@ -2331,7 +2341,7 @@ function App() {
           syncError={syncError}
         />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.4 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.5 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
