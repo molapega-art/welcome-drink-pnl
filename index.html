@@ -915,7 +915,7 @@ function FixedCostsTab({ data, onUpdateMonth, isEditor, editPassword, onReload, 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
         Редактирование здесь создаёт запись в листе DDS с пометкой «{FC_TAG}» и месяцем начисления = выбранный месяц.
         При повторном редактировании тот же DDS-record обновляется (не дублируется). Ноль = запись скрывается.
-        Переменные расходы (маркетинг, зарплаты, списания) лучше вводить в ДДС или «Расходы» по факту оплаты.
+        Переменные расходы (маркетинг, зарплаты, списания) лучше вводить в ДДС по факту оплаты.
       </div>
 
       <div className="bg-white rounded-xl border p-4 flex items-center gap-4 flex-wrap">
@@ -2174,10 +2174,7 @@ function App() {
     {id:"dow",label:"Дни недели",icon:"▦"},
     {id:"forecast",label:"Прогноз",icon:"◷"},
     {id:"fixcost",label:"Пост. расходы",icon:"₾"},
-    {id:"sync",label:"Синхронизация",icon:"⟳"},
     {id:"gsheets",label:"Google Sheets",icon:"⊞"},
-    {id:"expenses",label:"Расходы",icon:"+"},
-    {id:"settings",label:"Настройки",icon:"⚙"},
   ];
 
   return (
@@ -2228,7 +2225,6 @@ function App() {
         {tab==="dow" && <DayOfWeekTab data={data} />}
         {tab==="forecast" && <ForecastTab data={data} />}
         {tab==="fixcost" && <FixedCostsTab data={data} isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} />}
-        {tab==="sync" && <SyncTab />}
         {tab==="gsheets" && <GoogleSheetsTab
           sheetId={DEFAULT_SHEET_ID}
           onRefresh={loadFromSheets}
@@ -2237,10 +2233,8 @@ function App() {
           stats={syncStats}
           syncError={syncError}
         />}
-        {tab==="expenses" && <ExpensesTab isEditor={isEditor} editPassword={editPassword} onReload={loadFromSheets} realDDS={ddsRecords} useRealDDS={dataSource === "sheets"} />}
-        {tab==="settings" && <SettingsTab blocks={blocks} onUpdateBlocks={setBlocks} />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.1 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.2 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
