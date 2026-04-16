@@ -272,10 +272,10 @@ function PnLTable({ columns }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
-        <thead>
-          <tr className="border-b-2 border-gray-800">
-            <th className="py-2 pl-2 pr-4 text-left text-xs font-bold text-gray-400 uppercase w-52">WELCOME DRINK</th>
-            {columns.map((c,i) => <th key={i} className="py-2 px-2 text-right text-sm font-bold text-gray-700 min-w-24">{c.label}</th>)}
+        <thead className="sticky top-0 z-10">
+          <tr className="border-b-2 border-gray-800 bg-white shadow-sm">
+            <th className="py-2 pl-2 pr-4 text-left text-xs font-bold text-gray-400 uppercase w-52 bg-white sticky left-0 z-20">WELCOME DRINK</th>
+            {columns.map((c,i) => <th key={i} className="py-2 px-2 text-right text-sm font-bold text-gray-700 min-w-24 bg-white">{c.label}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1233,7 +1233,13 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
 
   const startEdit = (t) => {
     setEditingId(t.id);
-    setEditDraft({ category: t.category, desc: t.desc, amount: t.amount });
+    setEditDraft({
+      category: t.category,
+      desc: t.desc,
+      amount: t.amount,
+      date: t.date || "",
+      accrualMonth: t.accrualMonth || (t.date ? t.date.slice(0, 7) : ""),
+    });
   };
 
   const saveEdit = async (id) => {
@@ -1244,6 +1250,8 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
           subcategory: editDraft.category,
           description: editDraft.desc,
           amount: Number(editDraft.amount) || 0,
+          date: editDraft.date,
+          accrualMonth: editDraft.accrualMonth,
         });
         setEditingId(null);
         if (onReload) setTimeout(onReload, 300);
@@ -1281,6 +1289,7 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
         .map(r => ({
           id: r.id,
           date: r.date,
+          accrualMonth: r.accrualMonth || (r.date ? r.date.slice(0, 7) : ""),
           type: r.type === "income" ? "income" : "expense",
           source: "Google Sheets",
           category: r.subcategory || r.category || "—",
@@ -1580,7 +1589,19 @@ function DDSTab({ data, isEditor, editPassword, onReload, realDDS = [], useRealD
                 const isEditing = editingId === t.id;
                 return (
                 <tr key={t.id} className={`border-b border-gray-50 hover:bg-gray-50 ${hidden ? 'opacity-40 bg-gray-50' : ''}`}>
-                  <td className="py-1.5 pr-2 text-gray-500 whitespace-nowrap">{t.date.split('-').slice(1).join('.')}</td>
+                  <td className="py-1.5 pr-2 text-gray-500 whitespace-nowrap">
+                    {isEditing
+                      ? <div className="flex flex-col gap-1">
+                          <input type="date" value={editDraft.date} onChange={e => setEditDraft({...editDraft, date: e.target.value})} className="border rounded px-1 py-0.5 text-xs" title="Дата оплаты" />
+                          <input type="month" value={editDraft.accrualMonth} onChange={e => setEditDraft({...editDraft, accrualMonth: e.target.value})} className="border rounded px-1 py-0.5 text-xs text-indigo-600" title="Месяц начисления (для P&L)" />
+                        </div>
+                      : <div className="flex flex-col">
+                          <span>{t.date.split('-').slice(1).join('.')}</span>
+                          {t.accrualMonth && t.accrualMonth !== t.date.slice(0,7) && (
+                            <span className="text-xs text-indigo-500" title="Месяц начисления">→ {t.accrualMonth.split('-').reverse().join('/')}</span>
+                          )}
+                        </div>}
+                  </td>
                   <td className="py-1.5 pr-2">
                     <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${t.type==='income' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                       {t.type === 'income' ? '+' : '−'}
@@ -1968,12 +1989,29 @@ async function fetchSheetsData(sheetId) {
     const ddsRows = await gsRead(sheetId, "DDS!A1:I5000");
     ddsRecords = parseDDSSheet(ddsRows);
   } catch (_) {}
-  const appData = transformSheetsToData(parsed, dailyRows);
+  const appData = transformSheetsToData(parsed, dailyRows, ddsRecords);
   return {
     appData,
     ddsRecords,
     stats: { months: appData.length, daily: dailyRows.length, dds: ddsRecords.length }
   };
+}
+
+// Aggregate DDS by accrualMonth → { "YYYY-MM": { key: totalAmount } }
+// Uses accrualMonth (not payment date) so expenses land in the correct P&L period.
+function aggregateDDSByAccrualMonth(ddsRecords) {
+  const agg = {};
+  for (const rec of ddsRecords) {
+    if (rec.hidden) continue;
+    if (rec.type === "income") continue; // income handled elsewhere
+    const monthLabel = rec.accrualMonth || (rec.date ? rec.date.slice(0, 7) : null);
+    if (!monthLabel) continue;
+    const key = NAME_TO_KEY[(rec.subcategory || "").trim()];
+    if (!key) continue;
+    agg[monthLabel] = agg[monthLabel] || {};
+    agg[monthLabel][key] = (agg[monthLabel][key] || 0) + (Number(rec.amount) || 0);
+  }
+  return agg;
 }
 
 // Aggregate DDS records into { "YYYY-MM": { key: amount, ... } }
@@ -1994,19 +2032,30 @@ function aggregateDDSByMonth(ddsRecords) {
 // Transform monthly sheet data into the app's data shape: array of month objects with days[].
 // Days come STRICTLY from the Daily sheet — no synthetic distribution.
 // If a date has no Daily entry, its day object has revenue=0/foodcost=0.
-function transformSheetsToData(parsed, dailyRows) {
+function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
   const result = [];
-  const sortedMonths = Object.keys(parsed).sort();
+  // DDS aggregation by accrualMonth is the source of truth for expenses.
+  // Monthly sheet (SUMIFS formulas) can have missing columns or errors — we don't trust it for expense lines.
+  const ddsAgg = aggregateDDSByAccrualMonth(ddsRecords);
+  // Union of months: from Monthly sheet AND from DDS accrualMonth labels.
+  // This way a DDS record with accrualMonth=2027-03 creates a synthetic month even if Monthly has no 2027-03 column.
+  const monthSet = new Set([...Object.keys(parsed), ...Object.keys(ddsAgg)]);
+  const sortedMonths = [...monthSet].sort();
   const dailyIdx = {};
   if (Array.isArray(dailyRows)) {
     for (const d of dailyRows) {
       if (d.date) dailyIdx[d.date] = d;
     }
   }
+  // All expense keys we override from DDS aggregation
+  const expenseKeys = new Set([
+    ...STRUCTURE.fixCost, ...STRUCTURE.marketing, ...STRUCTURE.salaries,
+    ...STRUCTURE.management, ...STRUCTURE.writeoffs, ...STRUCTURE.tax,
+  ].map(x => x.key));
   for (const monthLabel of sortedMonths) {
     const [year, mm] = monthLabel.split('-').map(Number);
     const monthIdx = mm - 1;
-    const md = parsed[monthLabel];
+    const md = parsed[monthLabel] || {}; // may be empty for DDS-only months
     const daysN = new Date(year, monthIdx + 1, 0).getDate();
     const days = [];
     for (let d = 1; d <= daysN; d++) {
@@ -2026,7 +2075,7 @@ function transformSheetsToData(parsed, dailyRows) {
       });
     }
     const totalTransactions = days.reduce((s, d) => s + (d.transactions || 0), 0);
-    result.push({
+    const monthEntry = {
       ...md,
       month: monthIdx,
       year,
@@ -2036,7 +2085,13 @@ function transformSheetsToData(parsed, dailyRows) {
       foodcost: Number(md.foodcost) || 0,
       kitchenRevenue: Number(md.kitchenRevenue) || 0,
       kitchenFoodcost: Number(md.kitchenFoodcost) || 0,
+    };
+    // Override expense keys from DDS aggregation (source of truth).
+    const ddsMonth = ddsAgg[monthLabel] || {};
+    expenseKeys.forEach(k => {
+      monthEntry[k] = Number(ddsMonth[k] || 0);
     });
+    result.push(monthEntry);
   }
   return result;
 }
@@ -2276,7 +2331,7 @@ function App() {
           syncError={syncError}
         />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.3 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.4 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
