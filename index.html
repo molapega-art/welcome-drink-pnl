@@ -1938,12 +1938,42 @@ function parseMonthlySheet(rows) {
   return data;
 }
 
+// Alias map: canonical English key → list of accepted header names (lowercase)
+const DAILY_ALIASES = {
+  date:            ["date", "дата"],
+  weekday:         ["weekday", "день недели"],
+  revenueTotal:    ["revenuetotal", "revenue", "оборот", "выручка"],
+  foodcost:        ["foodcost", "себестоимость", "фудкост"],
+  transactions:    ["transactions", "чеков", "чеки", "кол-во чеков"],
+  avgCheck:        ["avgcheck", "ср.чек", "средний чек", "avg check"],
+  kitchenRevenue:  ["kitchenrevenue", "оборот кухня", "выручка кухня", "kitchen revenue"],
+  kitchenFoodcost: ["kitchenfoodcost", "фудкост кухня", "себестоимость кухня", "kitchen foodcost"],
+};
+
 function parseDailySheet(rows) {
   if (!rows || rows.length < 2) return [];
-  const header = rows[0];
-  return rows.slice(1).filter(r => r[0]).map(r => {
+  // Find header row (scan first 3 rows for one containing "дата" or "date")
+  let headerRowIdx = 0;
+  for (let i = 0; i < Math.min(3, rows.length); i++) {
+    const joined = (rows[i] || []).map(c => String(c || "").toLowerCase().trim()).join("|");
+    if (joined.includes("дата") || joined.includes("date")) { headerRowIdx = i; break; }
+  }
+  const rawHeader = rows[headerRowIdx];
+  // Build column index → canonical key mapping
+  const colMap = []; // colMap[i] = canonical key or null
+  for (let i = 0; i < rawHeader.length; i++) {
+    const h = String(rawHeader[i] || "").toLowerCase().trim();
+    let found = null;
+    for (const [canonical, aliases] of Object.entries(DAILY_ALIASES)) {
+      if (aliases.includes(h)) { found = canonical; break; }
+    }
+    colMap.push(found);
+  }
+  return rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
     const obj = {};
-    header.forEach((h, i) => { obj[h] = r[i] || ""; });
+    colMap.forEach((key, i) => {
+      if (key) obj[key] = r[i] || "";
+    });
     return obj;
   });
 }
@@ -2086,16 +2116,21 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
       });
     }
     const totalTransactions = days.reduce((s, d) => s + (d.transactions || 0), 0);
+    // Compute revenue/foodcost from Daily sums (source of truth); fallback to Monthly sheet
+    const dailyRevenue = days.reduce((s, d) => s + (d.revenue || 0), 0);
+    const dailyFoodcost = days.reduce((s, d) => s + (d.foodcost || 0), 0);
+    const dailyKitchenRev = days.reduce((s, d) => s + (d.kitchenRevenue || 0), 0);
+    const dailyKitchenFC = days.reduce((s, d) => s + (d.kitchenFoodcost || 0), 0);
     const monthEntry = {
       ...md,
       month: monthIdx,
       year,
       days,
       totalTransactions,
-      revenueTotal: Number(md.revenueTotal) || 0,
-      foodcost: Number(md.foodcost) || 0,
-      kitchenRevenue: Number(md.kitchenRevenue) || 0,
-      kitchenFoodcost: Number(md.kitchenFoodcost) || 0,
+      revenueTotal: dailyRevenue > 0 ? dailyRevenue : (Number(md.revenueTotal) || 0),
+      foodcost: dailyFoodcost > 0 ? dailyFoodcost : (Number(md.foodcost) || 0),
+      kitchenRevenue: dailyKitchenRev > 0 ? dailyKitchenRev : (Number(md.kitchenRevenue) || 0),
+      kitchenFoodcost: dailyKitchenFC > 0 ? dailyKitchenFC : (Number(md.kitchenFoodcost) || 0),
     };
     // Override expense keys from DDS aggregation (source of truth).
     const ddsMonth = ddsAgg[monthLabel] || {};
