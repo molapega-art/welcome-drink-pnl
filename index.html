@@ -1884,6 +1884,7 @@ async function gsWriteAction(action, password, data = {}) {
 const addDDSEntry = (password, entry) => gsWriteAction("addDDS", password, entry);
 const updateDDSEntry = (password, id, updates) => gsWriteAction("updateDDS", password, { id, updates });
 const setMonthlyValue = (password, month, key, value) => gsWriteAction("setMonthly", password, { month, key, value });
+const syncPosterRevenue = (password, dateFrom, dateTo) => gsWriteAction("syncPoster", password, { dateFrom, dateTo });
 
 const MONTHLY_KEY_ORDER = [
   "revenueTotal","foodcost","grossProfit",
@@ -2106,9 +2107,43 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
   return result;
 }
 
-function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syncError }) {
+function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syncError, isEditor, editPassword }) {
   const sheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
   const humanTs = lastSyncedAt ? new Date(lastSyncedAt).toLocaleString("ru-RU") : "—";
+
+  // Poster sync state
+  const today = new Date();
+  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const toIso = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const [posterFrom, setPosterFrom] = useState(toIso(firstOfMonth));
+  const [posterTo, setPosterTo] = useState(toIso(today));
+  const [posterSyncing, setPosterSyncing] = useState(false);
+  const [posterResult, setPosterResult] = useState(null); // { type: 'success'|'error', text, days, total }
+
+  const runPosterSync = async () => {
+    setPosterResult(null);
+    if (!posterFrom || !posterTo) {
+      setPosterResult({ type: 'error', text: 'Укажи обе даты' });
+      return;
+    }
+    if (posterFrom > posterTo) {
+      setPosterResult({ type: 'error', text: 'Дата "с" должна быть раньше или равна "по"' });
+      return;
+    }
+    setPosterSyncing(true);
+    try {
+      const res = await syncPosterRevenue(editPassword, posterFrom, posterTo);
+      setPosterResult({
+        type: 'success',
+        text: `Синхронизировано ${res.days || 0} дн., ${res.transactions || 0} чеков, итого ${(res.total || 0).toLocaleString('ru-RU')} ₾`,
+      });
+      if (onRefresh) setTimeout(onRefresh, 500);
+    } catch (e) {
+      setPosterResult({ type: 'error', text: e.message || 'Ошибка синхронизации' });
+    } finally {
+      setPosterSyncing(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -2152,6 +2187,59 @@ function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syn
         )}
       </div>
 
+      {/* Poster POS sync */}
+      <div className="bg-white rounded-xl border border-indigo-200 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+              <span className="text-indigo-600">⇅</span> Poster POS — синхронизация выручки
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Тянет суммы чеков из Poster по выбранному периоду и пишет в лист Daily. Повторный запуск обновляет существующие дни.
+            </p>
+          </div>
+        </div>
+
+        {!isEditor ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+            Войди как редактор (🔒 в шапке), чтобы запускать синхронизацию.
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">Период с</label>
+                <input type="date" value={posterFrom} onChange={e => setPosterFrom(e.target.value)}
+                  className="border rounded px-3 py-2 text-sm" disabled={posterSyncing} />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">по</label>
+                <input type="date" value={posterTo} onChange={e => setPosterTo(e.target.value)}
+                  className="border rounded px-3 py-2 text-sm" disabled={posterSyncing} />
+              </div>
+              <button onClick={runPosterSync} disabled={posterSyncing}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+                {posterSyncing ? "Синхронизация…" : "Синхронизировать"}
+              </button>
+              <div className="flex gap-1 text-xs">
+                <button onClick={() => { const d = new Date(); setPosterFrom(toIso(new Date(d.getFullYear(), d.getMonth(), 1))); setPosterTo(toIso(d)); }}
+                  className="px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200" disabled={posterSyncing}>Текущий месяц</button>
+                <button onClick={() => { const d = new Date(); const s = new Date(d.getFullYear(), d.getMonth()-1, 1); const e = new Date(d.getFullYear(), d.getMonth(), 0); setPosterFrom(toIso(s)); setPosterTo(toIso(e)); }}
+                  className="px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200" disabled={posterSyncing}>Прошлый месяц</button>
+                <button onClick={() => { const d = new Date(); const y = new Date(d); y.setDate(d.getDate()-1); setPosterFrom(toIso(y)); setPosterTo(toIso(y)); }}
+                  className="px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200" disabled={posterSyncing}>Вчера</button>
+              </div>
+            </div>
+
+            {posterResult && (
+              <div className={`rounded-lg p-3 text-sm ${posterResult.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+                {posterResult.type === 'success' ? '✓ ' : '✗ '}{posterResult.text}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl border p-6 space-y-4">
         <h3 className="font-semibold text-gray-800">Как работает</h3>
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800 space-y-2">
@@ -2160,6 +2248,7 @@ function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syn
           <p>• При каждой загрузке страницы подтягиваются свежие цифры</p>
           <p>• Для обновления данных — редактируй Google Таблицу, потом жми "↻ Обновить" или перезагрузи страницу</p>
           <p>• DDS-записи автоматически суммируются в месячные итоги</p>
+          <p>• Poster-синхронизация обновляет строки в листе Daily по дате (идемпотентно)</p>
         </div>
       </div>
     </div>
@@ -2339,9 +2428,11 @@ function App() {
           lastSyncedAt={lastSyncedAt}
           stats={syncStats}
           syncError={syncError}
+          isEditor={isEditor}
+          editPassword={editPassword}
         />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.5 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.6 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
