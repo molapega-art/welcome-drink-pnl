@@ -24,7 +24,6 @@ window.addEventListener('error', e => {
 const { useState, useMemo, useEffect, useRef } = React;
 const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Area, Line, LineChart } = Recharts;
 
-
 const MONTHS = ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"];
 const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#ec4899","#14b8a6","#f97316","#06b6d4","#84cc16","#a855f7","#64748b"];
@@ -352,18 +351,19 @@ function PnLTable({ columns }) {
 // TABS
 // ════════════════════════════════════════════════
 function DashboardTab({ data }) {
-  // Default selMonth = current month in data, else last
-  const defaultIdx = (() => {
+  const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort(), [data]);
+  const defaultYear = availableYears.includes(new Date().getFullYear()) ? new Date().getFullYear() : (availableYears[availableYears.length - 1] || new Date().getFullYear());
+  const [periodType, setPeriodType] = useState("month");
+  const [selYear, setSelYear] = useState(defaultYear);
+  const [selMonth, setSelMonth] = useState(0);
+  // Sync selMonth to current month whenever data changes (async load)
+  useEffect(() => {
+    if (!data.length) return;
     const now = new Date();
     const target = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const idx = data.findIndex(m => `${m.year}-${String(m.month+1).padStart(2,'0')}` === target);
-    return idx >= 0 ? idx : Math.max(0, data.length - 1);
-  })();
-  const availableYears = useMemo(() => [...new Set(data.map(d => d.year))].sort(), [data]);
-  const defaultYear = availableYears.includes(new Date().getFullYear()) ? new Date().getFullYear() : (availableYears[availableYears.length - 1] || new Date().getFullYear());
-  const [periodType, setPeriodType] = useState("year");
-  const [selYear, setSelYear] = useState(defaultYear);
-  const [selMonth, setSelMonth] = useState(defaultIdx);
+    setSelMonth(idx >= 0 ? idx : data.length - 1);
+  }, [data]);
   const firstMonth = data[0] ? `${data[0].year}-${String(data[0].month+1).padStart(2,'0')}-01` : `${defaultYear}-01-01`;
   const lastMonthData = data[data.length - 1];
   const lastDay = lastMonthData ? new Date(lastMonthData.year, lastMonthData.month + 1, 0).getDate() : 31;
@@ -2309,7 +2309,7 @@ function LoginModal({ onLogin, onClose, error }) {
   );
 }
 
-function App() {
+export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(genDemo);
   const [blocks, setBlocks] = useState(DEFAULT_BLOCKS);
@@ -2432,7 +2432,7 @@ function App() {
           editPassword={editPassword}
         />}
       </div>
-      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.6 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
+      <div className="border-t bg-white mt-8"><div className="max-w-7xl mx-auto px-4 py-3 text-xs text-gray-400 flex justify-between"><span>Welcome Drink P&L v4.7 — {dataSource === "sheets" ? `${data.length} мес. из Google Sheets` : "демо-данные"}{isEditor ? " · режим редактирования" : ""}</span><span>Poster POS API • Google Sheets (public)</span></div></div>
       {loginOpen && (
         <LoginModal
           onLogin={(pw) => { setEditPassword(pw); setLoginOpen(false); }}
