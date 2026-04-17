@@ -51,6 +51,7 @@ const STRUCTURE = {
     { key: "accountant", name: "Бухгалтер" },
     { key: "security", name: "Сигнализация (охрана)" },
     { key: "aroma", name: "Aromaco (ароматизация)" },
+    { key: "household", name: "Хозтовары" },
   ],
   marketing: [
     { key: "mktYandex", name: "Яндекс реклама" },
@@ -1885,6 +1886,7 @@ const addDDSEntry = (password, entry) => gsWriteAction("addDDS", password, entry
 const updateDDSEntry = (password, id, updates) => gsWriteAction("updateDDS", password, { id, updates });
 const setMonthlyValue = (password, month, key, value) => gsWriteAction("setMonthly", password, { month, key, value });
 const syncPosterRevenue = (password, dateFrom, dateTo) => gsWriteAction("syncPoster", password, { dateFrom, dateTo });
+const syncPosterExpenses = (password, dateFrom, dateTo) => gsWriteAction("syncPosterExpenses", password, { expenseDateFrom: dateFrom, expenseDateTo: dateTo });
 
 const MONTHLY_KEY_ORDER = [
   "revenueTotal","foodcost","grossProfit",
@@ -2171,6 +2173,8 @@ function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syn
   const [posterTo, setPosterTo] = useState(toIso(today));
   const [posterSyncing, setPosterSyncing] = useState(false);
   const [posterResult, setPosterResult] = useState(null); // { type: 'success'|'error', text, days, total }
+  const [expSyncing, setExpSyncing] = useState(false);
+  const [expResult, setExpResult] = useState(null);
 
   const runPosterSync = async () => {
     setPosterResult(null);
@@ -2288,6 +2292,33 @@ function GoogleSheetsTab({ sheetId, onRefresh, loading, lastSyncedAt, stats, syn
                 {posterResult.type === 'success' ? '✓ ' : '✗ '}{posterResult.text}
               </div>
             )}
+
+            {/* ── Poster Expenses sync ── */}
+            <div className="border-t pt-4 mt-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">Расходы из Poster (Финансы → ДДС)</h4>
+              <div className="flex items-end gap-3 flex-wrap">
+                <button onClick={async () => {
+                  setExpSyncing(true); setExpResult(null);
+                  try {
+                    const res = await syncPosterExpenses(editPassword, posterFrom, posterTo);
+                    setExpResult({ type: 'success', text: `Загружено ${res.inserted || 0} новых, обновлено ${res.updated || 0}, пропущено ${res.skipped || 0}${res.unmappedCategories && res.unmappedCategories.length ? '. Неизвестные категории: ' + res.unmappedCategories.join(', ') : ''}` });
+                    if (onRefresh) onRefresh();
+                  } catch (err) {
+                    setExpResult({ type: 'error', text: err.message });
+                  }
+                  setExpSyncing(false);
+                }} disabled={expSyncing || posterSyncing}
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 disabled:opacity-50">
+                  {expSyncing ? "Загрузка расходов…" : "Загрузить расходы"}
+                </button>
+                <span className="text-xs text-gray-400">Используются даты выше ({posterFrom} — {posterTo})</span>
+              </div>
+              {expResult && (
+                <div className={`mt-2 rounded-lg p-3 text-sm ${expResult.type === 'success' ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+                  {expResult.type === 'success' ? '✓ ' : '✗ '}{expResult.text}
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
