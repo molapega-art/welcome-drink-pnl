@@ -1973,13 +1973,16 @@ function parseDailySheet(rows) {
   }
   // Debug: log header mapping to console
   console.log("[parseDailySheet] headers:", rawHeader.map((h,i)=>`${h}→${colMap[i]||'?'}`).join(", "));
-  return rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
+  const parsed = rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
     const obj = {};
     colMap.forEach((key, i) => {
-      if (key) obj[key] = r[i] || "";
+      if (key) obj[key] = r[i] != null ? r[i] : "";
     });
     return obj;
   });
+  // Debug: show first 3 data rows
+  console.log("[parseDailySheet] rows:", parsed.length, "first 3:", JSON.stringify(parsed.slice(0, 3)));
+  return parsed;
 }
 
 // Parse DDS sheet: skip header-ish rows, return transactions
@@ -2089,9 +2092,24 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
   const dailyIdx = {};
   if (Array.isArray(dailyRows)) {
     for (const d of dailyRows) {
-      if (d.date) dailyIdx[d.date] = d;
+      if (d.date) {
+        // Normalize date key: handle Date objects, serial numbers, various string formats
+        let dk = d.date;
+        if (typeof dk === "number") {
+          // Google Sheets serial date → JS date (epoch 1899-12-30)
+          const dt = new Date(Math.round((dk - 25569) * 86400000));
+          dk = dt.toISOString().slice(0, 10);
+        } else {
+          dk = String(dk).trim().slice(0, 10);
+          // Handle "DD.MM.YYYY" or "DD/MM/YYYY" formats
+          const dmy = dk.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+          if (dmy) dk = `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+        }
+        dailyIdx[dk] = d;
+      }
     }
   }
+  console.log("[transform] dailyIdx keys (first 5):", Object.keys(dailyIdx).slice(0, 5));
   // All expense keys we override from DDS aggregation
   const expenseKeys = new Set([
     ...STRUCTURE.fixCost, ...STRUCTURE.marketing, ...STRUCTURE.salaries,
@@ -2125,6 +2143,10 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
     const dailyFoodcost = days.reduce((s, d) => s + (d.foodcost || 0), 0);
     const dailyKitchenRev = days.reduce((s, d) => s + (d.kitchenRevenue || 0), 0);
     const dailyKitchenFC = days.reduce((s, d) => s + (d.kitchenFoodcost || 0), 0);
+    // Debug: monthly aggregation
+    const matchedDays = days.filter(d => d.revenue > 0);
+    console.log(`[transform] ${monthLabel}: dailyRevenue=${dailyRevenue}, dailyFoodcost=${dailyFoodcost}, matchedDays=${matchedDays.length}, md.revenueTotal=${md.revenueTotal}, md.foodcost=${md.foodcost}`);
+    if (matchedDays.length > 0) console.log(`[transform] ${monthLabel} sample day:`, JSON.stringify(matchedDays[0]));
     const monthEntry = {
       ...md,
       month: monthIdx,
