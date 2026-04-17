@@ -1941,7 +1941,7 @@ function parseMonthlySheet(rows) {
 // Alias map: canonical English key → list of accepted header names (normalized)
 const DAILY_ALIASES = {
   date:            ["date", "дата"],
-  weekday:         ["weekday", "день недели"],
+  weekday:         ["weekday", "dayofweek", "день недели"],
   revenueTotal:    ["revenuetotal", "revenue", "оборот", "выручка", "продажи"],
   foodcost:        ["foodcost", "себестоимость", "фудкост", "себестоимость (фудкост)", "себестоимость(фудкост)", "food cost"],
   transactions:    ["transactions", "чеков", "чеки", "кол-во чеков", "количество чеков"],
@@ -1972,17 +1972,13 @@ function parseDailySheet(rows) {
     colMap.push(found);
   }
   // Debug: log header mapping to console
-  console.log("[parseDailySheet] headers:", rawHeader.map((h,i)=>`${h}→${colMap[i]||'?'}`).join(", "));
-  const parsed = rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
+  return rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
     const obj = {};
     colMap.forEach((key, i) => {
       if (key) obj[key] = r[i] != null ? r[i] : "";
     });
     return obj;
   });
-  // Debug: show first 3 data rows
-  console.log("[parseDailySheet] rows:", parsed.length, "first 3:", JSON.stringify(parsed.slice(0, 3)));
-  return parsed;
 }
 
 // Parse DDS sheet: skip header-ish rows, return transactions
@@ -2109,7 +2105,6 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
       }
     }
   }
-  console.log("[transform] dailyIdx keys (first 5):", Object.keys(dailyIdx).slice(0, 5));
   // All expense keys we override from DDS aggregation
   const expenseKeys = new Set([
     ...STRUCTURE.fixCost, ...STRUCTURE.marketing, ...STRUCTURE.salaries,
@@ -2143,10 +2138,6 @@ function transformSheetsToData(parsed, dailyRows, ddsRecords = []) {
     const dailyFoodcost = days.reduce((s, d) => s + (d.foodcost || 0), 0);
     const dailyKitchenRev = days.reduce((s, d) => s + (d.kitchenRevenue || 0), 0);
     const dailyKitchenFC = days.reduce((s, d) => s + (d.kitchenFoodcost || 0), 0);
-    // Debug: monthly aggregation
-    const matchedDays = days.filter(d => d.revenue > 0);
-    console.log(`[transform] ${monthLabel}: dailyRevenue=${dailyRevenue}, dailyFoodcost=${dailyFoodcost}, matchedDays=${matchedDays.length}, md.revenueTotal=${md.revenueTotal}, md.foodcost=${md.foodcost}`);
-    if (matchedDays.length > 0) console.log(`[transform] ${monthLabel} sample day:`, JSON.stringify(matchedDays[0]));
     const monthEntry = {
       ...md,
       month: monthIdx,
