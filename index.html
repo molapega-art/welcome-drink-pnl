@@ -1905,7 +1905,7 @@ const FORMULA_KEYS = new Set([
 ]);
 
 async function gsRead(spreadsheetId, range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${GOOGLE_API_KEY}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${GOOGLE_API_KEY}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
   const res = await fetch(url);
   if (!res.ok) {
     const text = await res.text();
