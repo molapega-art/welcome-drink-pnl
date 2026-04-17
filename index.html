@@ -1938,37 +1938,41 @@ function parseMonthlySheet(rows) {
   return data;
 }
 
-// Alias map: canonical English key → list of accepted header names (lowercase)
+// Alias map: canonical English key → list of accepted header names (normalized)
 const DAILY_ALIASES = {
   date:            ["date", "дата"],
   weekday:         ["weekday", "день недели"],
-  revenueTotal:    ["revenuetotal", "revenue", "оборот", "выручка"],
-  foodcost:        ["foodcost", "себестоимость", "фудкост"],
-  transactions:    ["transactions", "чеков", "чеки", "кол-во чеков"],
-  avgCheck:        ["avgcheck", "ср.чек", "средний чек", "avg check"],
-  kitchenRevenue:  ["kitchenrevenue", "оборот кухня", "выручка кухня", "kitchen revenue"],
-  kitchenFoodcost: ["kitchenfoodcost", "фудкост кухня", "себестоимость кухня", "kitchen foodcost"],
+  revenueTotal:    ["revenuetotal", "revenue", "оборот", "выручка", "продажи"],
+  foodcost:        ["foodcost", "себестоимость", "фудкост", "себестоимость (фудкост)", "себестоимость(фудкост)", "food cost"],
+  transactions:    ["transactions", "чеков", "чеки", "кол-во чеков", "количество чеков"],
+  avgCheck:        ["avgcheck", "срчек", "средний чек", "avg check", "ср чек"],
+  kitchenRevenue:  ["kitchenrevenue", "оборот кухня", "выручка кухня", "kitchen revenue", "кухня оборот"],
+  kitchenFoodcost: ["kitchenfoodcost", "фудкост кухня", "себестоимость кухня", "kitchen foodcost", "кухня фудкост"],
 };
+// Normalize header: lowercase, collapse spaces, strip dots, ё→е
+const _normH = s => String(s||"").toLowerCase().trim().replace(/\s+/g," ").replace(/\./g,"").replace(/ё/g,"е");
 
 function parseDailySheet(rows) {
   if (!rows || rows.length < 2) return [];
   // Find header row (scan first 3 rows for one containing "дата" or "date")
   let headerRowIdx = 0;
   for (let i = 0; i < Math.min(3, rows.length); i++) {
-    const joined = (rows[i] || []).map(c => String(c || "").toLowerCase().trim()).join("|");
+    const joined = (rows[i] || []).map(c => _normH(c)).join("|");
     if (joined.includes("дата") || joined.includes("date")) { headerRowIdx = i; break; }
   }
   const rawHeader = rows[headerRowIdx];
   // Build column index → canonical key mapping
   const colMap = []; // colMap[i] = canonical key or null
   for (let i = 0; i < rawHeader.length; i++) {
-    const h = String(rawHeader[i] || "").toLowerCase().trim();
+    const h = _normH(rawHeader[i]);
     let found = null;
     for (const [canonical, aliases] of Object.entries(DAILY_ALIASES)) {
       if (aliases.includes(h)) { found = canonical; break; }
     }
     colMap.push(found);
   }
+  // Debug: log header mapping to console
+  console.log("[parseDailySheet] headers:", rawHeader.map((h,i)=>`${h}→${colMap[i]||'?'}`).join(", "));
   return rows.slice(headerRowIdx + 1).filter(r => r[0]).map(r => {
     const obj = {};
     colMap.forEach((key, i) => {
